@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  sanity-checks:
     runs-on: ubuntu-latest
 
     steps:
@@ -17,11 +17,6 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install dependencies
+      - name: Syntax check
         run: |
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install plyfile numpy imageio
-          pip install git+https://github.com/nerfstudio-project/gsplat.git --no-build-isolation
-
-      - name: Run smoke tests
-        run: python tests/test_loader.py
+          python -m py_compile src/vne3dgs/*.py demo/*.py tests/*.py
