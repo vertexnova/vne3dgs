@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Releases are managed by release-please from Conventional Commits.
 
+## [0.2.0](https://github.com/vertexnova/vne3dgs/compare/v0.1.0...v0.2.0) (2026-09-22)
+
+
+### Features
+
+* initial checkins ([92775fc](https://github.com/vertexnova/vne3dgs/commit/92775fc7b06b5a47e4d628c3949a9954324f671a))
+* initial commit for vne3dgs ([2dd04eb](https://github.com/vertexnova/vne3dgs/commit/2dd04eb8ea6be2a7d2e08bee25eed37e04b1b3f4))
+* intial task planning for the 3dgs ([4109e9c](https://github.com/vertexnova/vne3dgs/commit/4109e9c595c3e92d5fe68cf7892322c43d903b88))
+* setting up the lib ([482883a](https://github.com/vertexnova/vne3dgs/commit/482883a1c9fa2b291f2b38ee9fd532cd25f4f5bd))
+* vne3dgs v0.1.0 — first 3DGS render ([9d24acb](https://github.com/vertexnova/vne3dgs/commit/9d24acb152ceaae9fe3854b151cb1c9ff2d9b93b))
+
 ## [Unreleased]
 
 ### Changed
