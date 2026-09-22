@@ -1,49 +1,112 @@
-# Output files — rendered images, videos
-output/
-renders/
+# Prerequisites
+*.d
 
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Linker files
+*.ilk
+
+# Debugger Files
+*.pdb
+
+# Compiled Dynamic libraries
 *.so
-*.egg
-*.egg-info/
-dist/
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# debug information files
+*.dwo
+
+# Build directories
 build/
-.eggs/
-.Python
-pip-wheel-metadata/
+_build/
+cmake-build-*/
+build-*/
+out/
+target/
 
-# Virtual environments
-.venv/
-venv/
-env/
-ENV/
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+_deps/
 
-# Jupyter
-.ipynb_checkpoints/
-*.ipynb
+# IDE
+.idea/
+*.swp
+*~
 
-# Data — never commit large .ply files or datasets
+# Clangd cache
+.cache/
+
+# macOS
+.DS_Store
+._*
+
+# Test output
+test_dir/
+logs/
+*.log
+
+# CMakeLists.txt.user
+CMakeLists.txt.user
+
+# AI tools
+.cursor/
+.copilot/
+.claude/
+.deepseek/
+.gemini/
+.google/
+.openai/
+.anthropic/
+.perplexity/
+.grok/
+.grok/
+.grok/
+
+# ----------------------------------------------------------------------
+# vne3dgs data — never commit trained scenes, datasets or renders
+# ----------------------------------------------------------------------
 *.ply
+*.splat
 *.zip
 datasets/
 data/
+output/
+renders/
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-.DS_Store
+# Small, hand-made fixtures used by unit tests are the exception
+!testdata/
+!testdata/**
 
-# Test cache
-.pytest_cache/
-.coverage
-htmlcov/
-
-# Temporary
-tmp/
-temp/
-*.tmp
+# Python (training code under python/, added in Task 16)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/

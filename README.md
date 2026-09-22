@@ -1,171 +1,142 @@
-# vne3dgs
+<p align="center">
+  <img src="icons/vertexnova_logo_medallion_with_text.svg" alt="VertexNova 3DGS" width="320"/>
+</p>
 
-**3D Gaussian Splatting module for the VertexNova Engine**
+<p align="center">
+  <strong>3D Gaussian Splatting for the VertexNova ecosystem, built from first principles</strong>
+</p>
 
-A Python + CUDA library for loading and rendering 3D Gaussian Splatting scenes —
-built as a research companion to [VertexNova](https://learnvertexnova.com),
-the multi-backend C++20 rendering engine.
+<p align="center">
+  <a href="https://github.com/vertexnova/vne3dgs/actions/workflows/ci.yml">
+    <img src="https://github.com/vertexnova/vne3dgs/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"/>
+  </a>
+  <img src="https://img.shields.io/badge/C%2B%2B-20-blue.svg" alt="C++ Standard"/>
+  <a href="https://codecov.io/gh/vertexnova/vne3dgs">
+    <img src="https://codecov.io/gh/vertexnova/vne3dgs/branch/main/graph/badge.svg" alt="Coverage"/>
+  </a>
+  <img src="https://img.shields.io/badge/license-Apache%202.0-green.svg" alt="License"/>
+</p>
 
-## First render — garden scene
+---
 
-> 5,834,784 Gaussians · rendered in **133ms** · 1280×720 · DGX Spark GB10
+# Vne3dgs
 
-```
-Scene center: [-0.024  1.781  1.432]
-Scene spread: 9.215
-Load time:    0.60s
-Render time:  133.3ms
-Alpha coverage: 64.4%
-```
+**vne3dgs** (`vne::gs`) is a C++20 library that implements 3D Gaussian Splatting (3DGS) on the
+[VertexNova](https://github.com/vertexnova) stack, step by step: the math and a CPU reference
+renderer first, then a real-time GPU renderer on [vnerhi](https://github.com/vertexnova/vnerhi)
+(Metal / Vulkan / WebGPU), then training.
 
-## What this is
+It is also a learning project. Every step is a task file with its own learning material.
+**Start here: [docs/vertexnova/gs/roadmap.md](docs/vertexnova/gs/roadmap.md).**
 
-`vne3dgs` provides a clean Python API to:
+> The earlier Python prototype (a thin wrapper around gsplat) is preserved at git tag `python-prototype`.
 
-- Load pre-trained 3DGS scenes from standard `.ply` files
-- Render them using [gsplat](https://docs.gsplat.studio) — the CUDA-accelerated differentiable rasterizer
-- Orbit cameras, control viewpoints, composite backgrounds
-- Serve as the Python research layer before the C++/Vulkan integration in VertexNova
+## Status
 
-## Platform
+| Phase | What | Status |
+|-------|------|--------|
+| 0 | Scaffold (this repo layout, build, CI) | done |
+| 1–3 | 3DGS math + CPU reference renderer | not started |
+| 4 | Real-time GPU viewer (vnerhi) | not started |
+| 5 | Training (COLMAP, PyTorch, gsplat, own backward pass) | not started |
+| 6 | vnegfx integration (optional) | not started |
 
-Built and verified on **NVIDIA DGX Spark** (GB10 Grace Blackwell):
+Per-task status lives in the [roadmap](docs/vertexnova/gs/roadmap.md).
 
-| Component | Version |
-|-----------|---------|
-| OS | DGX OS 7.4.0 (Ubuntu 24.04) |
-| GPU | NVIDIA GB10 · SM 12.0 |
-| CUDA | 13.0.2 |
-| Driver | 580.142 |
-| Architecture | ARM64 / aarch64 |
-| PyTorch | 2.7.0 (NVIDIA build) |
-| gsplat | 1.5.3 |
-| Container | `vertexnova/gsplat-spark:v2` |
+## Directory layout
 
-## Install
+| Path | Description |
+|------|-------------|
+| `include/vertexnova/gs/` | Public API headers (`gs.h` is the umbrella header) |
+| `src/vertexnova/gs/` | Implementation |
+| `tests/` | Unit tests (Google Test) |
+| `testdata/` | Tiny hand-made fixtures for tests (committed; real scenes are not) |
+| `examples/` | One example per learning task (`00_hello_gs`, `01_gaussians_2d`, …) |
+| `docs/vertexnova/gs/` | Roadmap, task files, learning notes, glossary, references |
+| `cmake/vnecmake/` | Shared CMake modules (submodule) |
+| `deps/internal/` | VertexNova libs: vnecommon, vnelogging, vnemath (submodules) |
+| `deps/external/` | Third-party deps: googletest (submodule) |
+| `configs/` | Configured headers (`config.h.in`) |
+| `scripts/` | Build, format and docs scripts |
 
-```bash
-# Requires gsplat — on DGX Spark build from source
-export TORCH_CUDA_ARCH_LIST="12.0"
-pip install git+https://github.com/nerfstudio-project/gsplat.git --no-build-isolation
+## Prerequisites
 
-# Install vne3dgs
-pip install plyfile numpy imageio
-git clone https://github.com/vertexnova/vne3dgs.git
-cd vne3dgs
-```
+- **CMake** 3.19 or newer
+- **C++20** compiler (GCC 10+, Clang 10+, MSVC 2019+)
+- **Doxygen** (optional, for API docs)
 
-## Quick start
-
-```python
-from vne3dgs import load_ply, render, make_intrinsics, orbit_camera, scene_center
-import imageio
-
-# Load a pre-trained scene
-scene = load_ply("/path/to/point_cloud.ply")
-print(scene)
-# GaussianScene(n=5,834,784 Gaussians, device=cuda:0)
-
-# Set up camera
-center = scene_center(scene.means)
-K = make_intrinsics(1280, 720, fov_deg=60.0)
-viewmat = orbit_camera(center, radius=18.0, elevation_deg=20.0, azimuth_deg=45.0)
-
-# Render
-image, alpha = render(scene, viewmat, K, width=1280, height=720)
-
-# Save
-imageio.imwrite("render.png", image)
-```
-
-## Demo
+## Getting the code
 
 ```bash
-# Render garden scene (download pre-trained models first)
-python demo/render_scene.py \
-  --ply /path/to/garden/point_cloud/iteration_30000/point_cloud.ply \
-  --output output/garden_render.png \
-  --width 1280 \
-  --height 720 \
-  --elevation 20 \
-  --azimuth 45
+git clone --recursive https://github.com/vertexnova/vne3dgs.git
+# or, in an existing clone:
+git submodule update --init --recursive
 ```
 
-All arguments:
+See [deps/README.md](deps/README.md) for what each submodule is.
 
-| Argument | Default | Description |
-|----------|---------|-------------|
-| `--ply` | garden scene | Path to `.ply` file |
-| `--output` | `output/garden_render.png` | Output PNG path |
-| `--width` | 1280 | Image width |
-| `--height` | 720 | Image height |
-| `--fov` | 60.0 | Field of view (degrees) |
-| `--elevation` | 20.0 | Camera elevation (degrees) |
-| `--azimuth` | 45.0 | Camera azimuth (degrees) |
-| `--radius` | auto | Orbit radius (auto = 2× scene spread) |
-| `--device` | cuda | PyTorch device |
+## Build
 
-## Tests
+Builds use **`build/shared`** or **`build/static`** (one library type per directory). When vne3dgs is the
+top-level project, `VNE_GS_DEV` defaults to `ON`, which builds tests and examples.
 
 ```bash
-python tests/test_loader.py
+# Shared library (default)
+cmake -B build/shared -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/shared
+
+# Static library
+cmake -B build/static -DCMAKE_BUILD_TYPE=Debug -DVNE_GS_LIB_TYPE=static
+cmake --build build/static
 ```
 
-```
-========================================
-vne3dgs smoke tests
-========================================
-Device: cuda (NVIDIA GB10)
+Or use the platform scripts:
 
-test_load_ply ...        PASS
-test_scene_stats ...     PASS
-test_make_intrinsics ... PASS
-test_orbit_camera ...    PASS
-test_render_smoke ...    PASS
-
-All tests passed.
-========================================
+```bash
+./scripts/build_macos.sh -t Debug -a configure_and_build
+./scripts/build_macos.sh -l static -t Release -a configure_and_build
+./scripts/build_linux.sh -t Debug -a configure_and_build      # e.g. on the DGX Spark
+.\scripts\build_windows.ps1 -BuildType Debug -Action configure_and_build
 ```
 
-## Project structure
+Options: `-t` build type, `-a` action (`configure`, `build`, `configure_and_build`, `test`, …),
+`-l` lib type (`static` | `shared`), `-clean`, `-j N`. The macOS script also supports `-xcode`.
 
-```
-vne3dgs/
-├── src/
-│   └── vne3dgs/
-│       ├── __init__.py       # public API
-│       ├── loader.py         # .ply scene loader → GaussianScene
-│       ├── renderer.py       # gsplat rasterization wrapper
-│       └── camera.py         # intrinsics, look_at, orbit_camera
-├── demo/
-│   └── render_scene.py       # CLI render demo
-├── tests/
-│   └── test_loader.py        # smoke tests
-├── output/                   # rendered images (gitignored)
-├── requirements.txt
-└── README.md
+## Test
+
+```bash
+ctest -C Debug --test-dir build/shared --output-on-failure
+# or
+./scripts/build_macos.sh -a test
 ```
 
-## How it works
+Run the hello example:
 
-3DGS represents a scene as millions of 3D Gaussian ellipsoids — each with a position,
-scale, rotation, opacity, and color. Rendering projects these Gaussians onto the image
-plane and alpha-composites them front-to-back using tile-based rasterization.
+```bash
+./build/shared/bin/examples/example_00_hello_gs                                  # plain cmake -B build/shared
+./build/shared/Debug/build-macos-clang-*/bin/examples/example_00_hello_gs        # scripts/build_macos.sh
+```
 
-gsplat implements this pipeline in CUDA with differentiable gradients,
-enabling both inference (viewing) and training (optimizing a scene from photos).
+## Format and tidy
 
-`vne3dgs` wraps gsplat's `rasterization()` API with a clean interface that loads
-standard `.ply` files and handles the coordinate/data-type conventions automatically
-(log-space scales, logit opacities, SH DC to RGB conversion).
+- **clang-format** (CI pins clang-format 17; see [.clang-format](.clang-format)):
+  ```bash
+  ./scripts/format.sh          # format src, include, examples, tests in place
+  ./scripts/format.sh -check   # check only (same as CI)
+  ```
+- **clang-tidy**: configure with `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON`, then `clang-tidy -p build/shared <file>`.
 
-## Roadmap
+## Documentation
 
-- [ ] Orbit animation — render full 360° as video
-- [ ] Better camera placement — auto-fit to scene bounds
-- [ ] Spherical harmonics — view-dependent color (beyond DC term)
-- [ ] Vulkan port — real-time C++ renderer in VertexNova
-- [ ] Surgical scene reconstruction — COLMAP + 3DGS on medical data
+- **Learning roadmap and tasks:** [docs/vertexnova/gs/roadmap.md](docs/vertexnova/gs/roadmap.md)
+- **Library overview:** [docs/vertexnova/gs/gs.md](docs/vertexnova/gs/gs.md)
+- **API docs:** `cmake -B build/shared -DENABLE_DOXYGEN=ON && cmake --build build/shared --target vne3dgs_doc_doxygen`
+  (output in `build/shared/docs/html/index.html`), or `./scripts/generate-docs.sh`.
+
+## CI
+
+GitHub Actions runs on push and pull requests to `main`: format check, clang-tidy, and build/test on
+Linux (GCC, Clang), macOS and Windows. See [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
 ## Part of VertexNova
 
@@ -174,15 +145,12 @@ standard `.ply` files and handles the coordinate/data-type conventions automatic
 | Engine docs | [learnvertexnova.com](https://learnvertexnova.com) |
 | Research site | [vertexnova.github.io](https://vertexnova.github.io) |
 | GitHub org | [github.com/vertexnova](https://github.com/vertexnova) |
-| Engine repo | [github.com/vertexnova/vnetestbed](https://github.com/vertexnova/vnetestbed) |
 
-## Author
+## Contributing
 
-**Ajeet Yadav** · Principal Engineer · Stryker  
-M.Tech Signal Processing · IIT Kanpur  
-[linkedin.com/in/ajeet-yadav-b1133991](https://linkedin.com/in/ajeet-yadav-b1133991) ·
-[learnvertexnova.com](https://learnvertexnova.com)
+See [CONTRIBUTING.md](CONTRIBUTING.md) for build, test and style, and [CODING_GUIDELINES.md](CODING_GUIDELINES.md)
+for C++ conventions. We follow the [Contributor Covenant](CODE_OF_CONDUCT.md) Code of Conduct.
 
 ## License
 
-MIT
+[Apache License 2.0](LICENSE)
