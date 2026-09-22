@@ -37,7 +37,7 @@ Thank you for your interest in contributing. This document explains how to build
 ## Pull requests
 
 - Ensure the project builds and tests pass (locally or via CI).
-- Keep changes focused. CHANGELOG.md is updated manually when cutting a release (see [README.md](README.md#releases)).
+- Keep changes focused. CHANGELOG.md and VERSION are updated by release-please from Conventional Commit messages; don't edit them by hand.
 - If you add or change behavior, add or update tests as appropriate.
 
 ## Code review
