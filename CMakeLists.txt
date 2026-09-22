@@ -1,0 +1,408 @@
+#==============================================================================
+# Copyright (c) 2026 Ajeet Singh Yadav. All rights reserved.
+# Licensed under the Apache License, Version 2.0 (the "License")
+#
+# Author:    Ajeet Singh Yadav
+# Created:   September 2026
+#
+# Autodoc:   yes
+#==============================================================================
+
+cmake_minimum_required(VERSION 3.19)
+
+# Single source of truth for version (updated by release-please on release)
+set(VERSION_FILE "${CMAKE_CURRENT_LIST_DIR}/VERSION")
+if(EXISTS "${VERSION_FILE}")
+    file(READ "${VERSION_FILE}" VERSION_FROM_FILE)
+    string(STRIP "${VERSION_FROM_FILE}" VERSION_FROM_FILE)
+    if(VERSION_FROM_FILE)
+        set(PROJECT_VERSION_INIT "${VERSION_FROM_FILE}")
+    endif()
+endif()
+if(NOT DEFINED PROJECT_VERSION_INIT)
+    set(PROJECT_VERSION_INIT "1.0.0")
+endif()
+
+project(vne3dgs VERSION ${PROJECT_VERSION_INIT} LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# CMake modules from vnecmake submodule (cmake/vnecmake)
+set(VNE_DEPS_INTERNAL_DIR ${PROJECT_SOURCE_DIR}/deps/internal)
+set(VNE_DEPS_EXTERNAL_DIR ${PROJECT_SOURCE_DIR}/deps/external)
+set(VNECMAKE_MODULES "${PROJECT_SOURCE_DIR}/cmake/vnecmake/modules")
+if(NOT EXISTS "${VNECMAKE_MODULES}/VneUseDep.cmake")
+    message(FATAL_ERROR "vnecmake not found at cmake/vnecmake. Run: git submodule update --init --recursive")
+endif()
+list(APPEND CMAKE_MODULE_PATH "${VNECMAKE_MODULES}")
+
+include(ProjectSetup)
+
+#==============================================================================
+# Platform Detection
+#==============================================================================
+if(DEFINED VNE_TARGET_PLATFORM)
+    message(STATUS "Using manually specified target platform: ${VNE_TARGET_PLATFORM}")
+else()
+    if(EMSCRIPTEN)
+        set(VNE_TARGET_PLATFORM "Web")
+    elseif(WIN32)
+        set(VNE_TARGET_PLATFORM "Windows")
+    elseif(APPLE)
+        if(VISIONOS OR ${CMAKE_SYSTEM_NAME} STREQUAL "visionOS")
+            set(VNE_TARGET_PLATFORM "visionOS")
+        elseif(IOS OR ${CMAKE_SYSTEM_NAME} STREQUAL "iOS")
+            set(VNE_TARGET_PLATFORM "iOS")
+        else()
+            set(VNE_TARGET_PLATFORM "macOS")
+        endif()
+    elseif(UNIX)
+        if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
+            set(VNE_TARGET_PLATFORM "Linux")
+        elseif(${CMAKE_SYSTEM_NAME} STREQUAL "Android")
+            set(VNE_TARGET_PLATFORM "Android")
+        else()
+            message(FATAL_ERROR "Unsupported UNIX platform: ${CMAKE_SYSTEM_NAME}")
+        endif()
+    else()
+        message(FATAL_ERROR "Unsupported platform")
+    endif()
+endif()
+message(STATUS "Detected platform: ${VNE_TARGET_PLATFORM}")
+
+#==============================================================================
+# Platform-specific compile definitions
+#==============================================================================
+if(VNE_TARGET_PLATFORM STREQUAL "macOS")
+    add_compile_definitions(VNE_PLATFORM_MACOS)
+elseif(VNE_TARGET_PLATFORM STREQUAL "iOS")
+    add_compile_definitions(VNE_PLATFORM_IOS)
+elseif(VNE_TARGET_PLATFORM STREQUAL "visionOS")
+    add_compile_definitions(VNE_PLATFORM_VISIONOS)
+elseif(VNE_TARGET_PLATFORM STREQUAL "Windows")
+    add_compile_definitions(VNE_PLATFORM_WIN)
+elseif(VNE_TARGET_PLATFORM STREQUAL "Linux")
+    add_compile_definitions(VNE_PLATFORM_LINUX)
+elseif(VNE_TARGET_PLATFORM STREQUAL "Android")
+    add_compile_definitions(VNE_PLATFORM_ANDROID)
+elseif(VNE_TARGET_PLATFORM STREQUAL "Web")
+    add_compile_definitions(VNE_PLATFORM_WEB)
+endif()
+
+#==============================================================================
+# Internal Libraries (deps/internal) - use if already in build, else add
+#==============================================================================
+include(VneUseDep)
+
+# VNE_GS_LIB_TYPE is declared later; resolve early so internal deps (vnelogging,
+# vnemath) can match static vs shared before add_subdirectory. Default matches the
+# later option default ("shared").
+if(DEFINED VNE_GS_LIB_TYPE)
+    set(VNE_GS_LIB_TYPE_FOR_DEPS "${VNE_GS_LIB_TYPE}")
+elseif(DEFINED CACHE{VNE_GS_LIB_TYPE})
+    set(VNE_GS_LIB_TYPE_FOR_DEPS "${CACHE{VNE_GS_LIB_TYPE}}")
+else()
+    set(VNE_GS_LIB_TYPE_FOR_DEPS "shared")
+endif()
+
+function(_vne3dgs_configure_vnecommon_dep)
+    get_property(_vg_build_examples_ty CACHE BUILD_EXAMPLES PROPERTY TYPE)
+    if(NOT _vg_build_examples_ty STREQUAL "NOTFOUND" AND _vg_build_examples_ty)
+        set(_vg_build_examples_saved "${BUILD_EXAMPLES}")
+    endif()
+    vne_use_dep(TARGET vne::common SUBDIR "${VNE_DEPS_INTERNAL_DIR}/vnecommon" BINARY_DIR "${CMAKE_BINARY_DIR}/deps/internal/vnecommon"
+        CACHE_VARS BUILD_EXAMPLES OFF)
+    if(DEFINED _vg_build_examples_saved)
+        set(BUILD_EXAMPLES "${_vg_build_examples_saved}" CACHE BOOL "" FORCE)
+    else()
+        unset(BUILD_EXAMPLES CACHE)
+    endif()
+endfunction()
+_vne3dgs_configure_vnecommon_dep()
+
+function(_vne3dgs_configure_vnelogging_dep)
+    # Align internal deps with vne3dgs: shared vne3dgs needs shared vnelogging on Linux
+    # (non-PIC static .a into .so fails); static vne3dgs (e.g. iOS) must avoid shared
+    # intermediates or Xcode requires signing for each dylib target.
+    if(VNE_GS_LIB_TYPE_FOR_DEPS STREQUAL "shared")
+        set(VNE_LOGGING_LIB_TYPE "shared" CACHE STRING
+            "VneLogging library type (vne3dgs sets shared when VNE_GS_LIB_TYPE is shared)" FORCE)
+    elseif(VNE_GS_LIB_TYPE_FOR_DEPS STREQUAL "static")
+        set(VNE_LOGGING_LIB_TYPE "static" CACHE STRING
+            "VneLogging library type (vne3dgs sets static when VNE_GS_LIB_TYPE is static)" FORCE)
+    endif()
+    get_property(_vg_build_tests_ty CACHE BUILD_TESTS PROPERTY TYPE)
+    if(NOT _vg_build_tests_ty STREQUAL "NOTFOUND" AND _vg_build_tests_ty)
+        set(_vg_build_tests_saved "${BUILD_TESTS}")
+    endif()
+    get_property(_vg_build_examples_ty CACHE BUILD_EXAMPLES PROPERTY TYPE)
+    if(NOT _vg_build_examples_ty STREQUAL "NOTFOUND" AND _vg_build_examples_ty)
+        set(_vg_build_examples_saved "${BUILD_EXAMPLES}")
+    endif()
+    set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    vne_use_dep(TARGET vne::logging SUBDIR "${VNE_DEPS_INTERNAL_DIR}/vnelogging" BINARY_DIR "${CMAKE_BINARY_DIR}/deps/internal/vnelogging"
+        CACHE_VARS BUILD_TESTS OFF BUILD_EXAMPLES OFF)
+    if(DEFINED _vg_build_tests_saved)
+        set(BUILD_TESTS "${_vg_build_tests_saved}" CACHE BOOL "" FORCE)
+    else()
+        unset(BUILD_TESTS CACHE)
+    endif()
+    if(DEFINED _vg_build_examples_saved)
+        set(BUILD_EXAMPLES "${_vg_build_examples_saved}" CACHE BOOL "" FORCE)
+    else()
+        unset(BUILD_EXAMPLES CACHE)
+    endif()
+endfunction()
+_vne3dgs_configure_vnelogging_dep()
+
+function(_vne3dgs_configure_vnemath_dep)
+    set(VNE_MATH_TESTS OFF CACHE BOOL "Build vnemath test suite (OFF when used as dep of vne3dgs)" FORCE)
+    # VneMath defaults to shared; force static when vne3dgs is static (see vnelogging above).
+    if(VNE_GS_LIB_TYPE_FOR_DEPS STREQUAL "shared")
+        set(VNE_MATH_LIB_TYPE "shared" CACHE STRING
+            "VneMath library type (vne3dgs sets shared when VNE_GS_LIB_TYPE is shared)" FORCE)
+    elseif(VNE_GS_LIB_TYPE_FOR_DEPS STREQUAL "static")
+        set(VNE_MATH_LIB_TYPE "static" CACHE STRING
+            "VneMath library type (vne3dgs sets static when VNE_GS_LIB_TYPE is static)" FORCE)
+    endif()
+    get_property(_vg_build_tests_ty CACHE BUILD_TESTS PROPERTY TYPE)
+    if(NOT _vg_build_tests_ty STREQUAL "NOTFOUND" AND _vg_build_tests_ty)
+        set(_vg_build_tests_saved "${BUILD_TESTS}")
+    endif()
+    get_property(_vg_build_examples_ty CACHE BUILD_EXAMPLES PROPERTY TYPE)
+    if(NOT _vg_build_examples_ty STREQUAL "NOTFOUND" AND _vg_build_examples_ty)
+        set(_vg_build_examples_saved "${BUILD_EXAMPLES}")
+    endif()
+    set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    vne_use_dep(TARGET vne::math SUBDIR "${VNE_DEPS_INTERNAL_DIR}/vnemath" BINARY_DIR "${CMAKE_BINARY_DIR}/deps/internal/vnemath"
+        CACHE_VARS VNE_MATH_TESTS OFF BUILD_TESTS OFF BUILD_EXAMPLES OFF)
+    if(NOT TARGET vne::math)
+        vne_use_dep(TARGET vne::math SUBDIR "${VNE_DEPS_EXTERNAL_DIR}/vnemath" BINARY_DIR "${CMAKE_BINARY_DIR}/deps/external/vnemath"
+            CACHE_VARS VNE_MATH_TESTS OFF BUILD_TESTS OFF BUILD_EXAMPLES OFF)
+    endif()
+    if(NOT TARGET vne::math)
+        vne_use_dep(TARGET vne::math SUBDIR "${PROJECT_SOURCE_DIR}/../vnemath" BINARY_DIR "${CMAKE_BINARY_DIR}/vnemath"
+            CACHE_VARS VNE_MATH_TESTS OFF BUILD_TESTS OFF BUILD_EXAMPLES OFF)
+    endif()
+    if(NOT TARGET vne::math)
+        find_package(VneMath REQUIRED)
+    endif()
+    if(DEFINED _vg_build_tests_saved)
+        set(BUILD_TESTS "${_vg_build_tests_saved}" CACHE BOOL "" FORCE)
+    else()
+        unset(BUILD_TESTS CACHE)
+    endif()
+    if(DEFINED _vg_build_examples_saved)
+        set(BUILD_EXAMPLES "${_vg_build_examples_saved}" CACHE BOOL "" FORCE)
+    else()
+        unset(BUILD_EXAMPLES CACHE)
+    endif()
+endfunction()
+_vne3dgs_configure_vnemath_dep()
+
+# Include dirs and config
+set(VNE_INCLUDE_DIR ${PROJECT_SOURCE_DIR}/include)
+set(VNE_SRC_DIR ${PROJECT_SOURCE_DIR}/src)
+configure_file(${PROJECT_SOURCE_DIR}/configs/config.h.in ${CMAKE_BINARY_DIR}/config.h)
+include_directories(${CMAKE_BINARY_DIR})
+
+#==============================================================================
+# Build Options
+#==============================================================================
+# Option naming and deps:
+# - Use VNE_GS_* for vne3dgs-only options so there is no conflict when
+#   this project is used as a submodule (parent can set VNE_GS_TESTS=OFF
+#   without affecting BUILD_TESTS used by other deps).
+# - BUILD_TESTS / BUILD_EXAMPLES are global; we force them (via VneUseDep
+#   CACHE_VARS) before add_subdirectory for each dep so deps do not build their
+#   own tests/examples when used as internal libs. We restore after each dep.
+# - ENABLE_COVERAGE, ENABLE_DOXYGEN, WARNINGS_AS_ERRORS are global: if multiple
+#   libs in deps/internal define the same option name, the first to run wins the
+#   default; -D from the command line applies to all. No duplicate option()
+#   definition (CMake uses cache), but behavior is "one value for the whole tree."
+#==============================================================================
+if(CMAKE_PROJECT_NAME STREQUAL "vne3dgs")
+    set(VNE_GS_DEV_DEFAULT ON)
+else()
+    set(VNE_GS_DEV_DEFAULT OFF)
+endif()
+option(VNE_GS_DEV "Dev build: enable tests (local development)" ${VNE_GS_DEV_DEFAULT})
+option(VNE_GS_CI "CI build: enable tests (e.g. -DVNE_GS_CI=ON in pipelines)" OFF)
+
+if(VNE_GS_CI)
+    set(VNE_GS_DEV OFF CACHE BOOL "" FORCE)
+endif()
+
+option(VNE_GS_TESTS "Build vne3dgs test suite (turn OFF when used as submodule)" ON)
+option(VNE_GS_EXAMPLES "Build vne3dgs example programs (turn OFF when used as submodule)" OFF)
+set(VNE_GS_LIB_TYPE "shared" CACHE STRING "Library type for vne3dgs: static or shared (one per build)")
+set_property(CACHE VNE_GS_LIB_TYPE PROPERTY STRINGS "static" "shared")
+if(NOT VNE_GS_LIB_TYPE STREQUAL "static" AND NOT VNE_GS_LIB_TYPE STREQUAL "shared")
+    message(FATAL_ERROR
+        "VNE_GS_LIB_TYPE must be 'static' or 'shared'. Got: ${VNE_GS_LIB_TYPE}")
+endif()
+option(ENABLE_DOXYGEN "Enable Doxygen documentation builds" OFF)
+option(ENABLE_COVERAGE "Enable code coverage reporting" OFF)
+option(ENABLE_ASAN "Enable AddressSanitizer + UndefinedBehaviorSanitizer (Clang/GCC, Linux/macOS only)" OFF)
+option(WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
+
+#==============================================================================
+# Incompatible options: coverage and ASan/UBSan must not both be enabled
+# (--coverage + -fsanitize=... together produce noisy/incorrect results).
+#==============================================================================
+if(ENABLE_COVERAGE AND ENABLE_ASAN)
+    message(FATAL_ERROR
+        "ENABLE_COVERAGE and ENABLE_ASAN cannot both be ON. "
+        "Choose one: coverage (gcov/lcov) or ASan/UBSan. "
+        "Reconfigure with -DENABLE_COVERAGE=OFF or -DENABLE_ASAN=OFF.")
+endif()
+
+#==============================================================================
+# Coverage Support (gcov/lcov for CI; .gcda files generated when tests run)
+#==============================================================================
+if(ENABLE_COVERAGE)
+    include(FindCoverage OPTIONAL)
+    # Ensure coverage flags are applied (GCC/Clang) so .gcda files are emitted
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} --coverage")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --coverage")
+        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} --coverage")
+    endif()
+endif()
+
+#==============================================================================
+# AddressSanitizer + UndefinedBehaviorSanitizer
+# Linux/macOS only; incompatible with coverage (--coverage + ASan = noise).
+#==============================================================================
+if(ENABLE_ASAN)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" AND NOT WIN32)
+        add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+        add_link_options(-fsanitize=address,undefined)
+    else()
+        message(WARNING "ENABLE_ASAN is only supported with GCC/Clang on Linux/macOS — ignoring.")
+    endif()
+endif()
+
+if(VNE_GS_CI)
+    # CI enables tests by default, but allow explicit -DVNE_GS_TESTS=OFF to override
+    # (e.g. iOS/Android cross-compile builds: Xcode requires bundle ID for test targets).
+    if(NOT DEFINED VNE_GS_TESTS OR VNE_GS_TESTS)
+        set(VNE_GS_TESTS ON CACHE BOOL "" FORCE)
+    endif()
+    set(VNE_GS_EXAMPLES OFF CACHE BOOL "" FORCE)
+    message(STATUS "Vne3dgs: CI build -> VNE_GS_TESTS=${VNE_GS_TESTS}, VNE_GS_EXAMPLES=OFF")
+elseif(VNE_GS_DEV)
+    set(VNE_GS_TESTS ON CACHE BOOL "" FORCE)
+    set(VNE_GS_EXAMPLES ON CACHE BOOL "" FORCE)
+    message(STATUS "Vne3dgs: DEV build -> VNE_GS_TESTS=ON, VNE_GS_EXAMPLES=ON")
+endif()
+
+#==============================================================================
+# Compiler Warnings
+#==============================================================================
+add_library(GsWarnings INTERFACE)
+include(ProjectWarnings)
+set_project_warnings(GsWarnings)
+add_library(vne::gs::Warnings ALIAS GsWarnings)
+
+#==============================================================================
+# Build Settings Interface Library
+#==============================================================================
+add_library(GsBuildSettings INTERFACE)
+target_compile_features(GsBuildSettings INTERFACE cxx_std_20)
+add_library(vne::gs::BuildSettings ALIAS GsBuildSettings)
+
+if(CMAKE_BUILD_TYPE MATCHES Debug)
+    target_compile_definitions(GsBuildSettings INTERFACE VNE_BUILD_TYPE_DEBUG VNE_DEVELOPER_BUILD)
+elseif(CMAKE_BUILD_TYPE MATCHES Release)
+    target_compile_definitions(GsBuildSettings INTERFACE VNE_BUILD_TYPE_RELEASE)
+elseif(CMAKE_BUILD_TYPE MATCHES RelWithDebInfo)
+    target_compile_definitions(GsBuildSettings INTERFACE VNE_BUILD_TYPE_RELWITHDEBINFO)
+elseif(CMAKE_BUILD_TYPE MATCHES MinSizeRel)
+    target_compile_definitions(GsBuildSettings INTERFACE VNE_BUILD_TYPE_MINSIZEREL)
+endif()
+
+if(VNE_TARGET_PLATFORM STREQUAL "Windows")
+    target_compile_definitions(GsBuildSettings INTERFACE VNE_PLATFORM_WIN)
+elseif(VNE_TARGET_PLATFORM STREQUAL "Linux")
+    target_compile_definitions(GsBuildSettings INTERFACE VNE_PLATFORM_LINUX)
+elseif(VNE_TARGET_PLATFORM STREQUAL "macOS")
+    target_compile_definitions(GsBuildSettings INTERFACE VNE_PLATFORM_MACOS)
+elseif(VNE_TARGET_PLATFORM STREQUAL "iOS")
+    target_compile_definitions(GsBuildSettings INTERFACE VNE_PLATFORM_IOS)
+elseif(VNE_TARGET_PLATFORM STREQUAL "visionOS")
+    target_compile_definitions(GsBuildSettings INTERFACE VNE_PLATFORM_VISIONOS)
+elseif(VNE_TARGET_PLATFORM STREQUAL "Android")
+    target_compile_definitions(GsBuildSettings INTERFACE VNE_PLATFORM_ANDROID)
+elseif(VNE_TARGET_PLATFORM STREQUAL "Web")
+    target_compile_definitions(GsBuildSettings INTERFACE VNE_PLATFORM_WEB)
+endif()
+
+#==============================================================================
+# Add Library
+#==============================================================================
+add_subdirectory(src)
+
+#==============================================================================
+# Tests
+#==============================================================================
+if(VNE_GS_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
+
+#==============================================================================
+# Examples
+#==============================================================================
+if(VNE_GS_EXAMPLES)
+    add_subdirectory(examples)
+endif()
+
+#==============================================================================
+# Documentation
+#==============================================================================
+if(ENABLE_DOXYGEN)
+    find_package(Doxygen QUIET OPTIONAL_COMPONENTS dot)
+    if(Doxygen_FOUND)
+        set(DOXYGEN_IN ${PROJECT_SOURCE_DIR}/docs/doxyfile.in)
+        set(DOXYGEN_OUT ${CMAKE_BINARY_DIR}/doxyfile)
+        set(DOXYGEN_HAVE_DOT ${DOXYGEN_DOT_FOUND})
+        configure_file(${DOXYGEN_IN} ${DOXYGEN_OUT} @ONLY)
+        add_custom_target(vne3dgs_doc_doxygen ALL
+            COMMAND ${DOXYGEN_EXECUTABLE} ${DOXYGEN_OUT}
+            WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+            COMMENT "Generating API documentation with Doxygen"
+            VERBATIM
+        )
+        message(STATUS "Doxygen target: vne3dgs_doc_doxygen")
+    else()
+        message(STATUS "Doxygen not found. Install doxygen to build documentation.")
+    endif()
+endif()
+
+#==============================================================================
+# Installation
+# Use COMPONENT vne3dgs so that `cmake --install . --component vne3dgs`
+# installs only this library — not the internal deps (vnecommon, vnelogging)
+# which register their own install() rules via add_subdirectory.
+#==============================================================================
+include(GNUInstallDirs)
+install(TARGETS vne3dgs GsWarnings GsBuildSettings
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    COMPONENT vne3dgs
+)
+install(DIRECTORY include/vertexnova/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/vertexnova
+    COMPONENT vne3dgs
+    FILES_MATCHING PATTERN "*.h")
+install(DIRECTORY src/vertexnova/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/vertexnova
+    COMPONENT vne3dgs
+    FILES_MATCHING PATTERN "*.h")
+install(FILES ${CMAKE_BINARY_DIR}/config.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/vertexnova/gs
+    COMPONENT vne3dgs)

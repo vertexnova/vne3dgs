@@ -1,188 +1,149 @@
-# vne3dgs
+<p align="center">
+  <img src="icons/vertexnova_logo_medallion_with_text.svg" alt="VertexNova Template" width="320"/>
+</p>
 
-**3D Gaussian Splatting module for the VertexNova Engine**
+<p align="center">
+  <strong>Minimal C++ project template for the VertexNova ecosystem</strong>
+</p>
 
-A Python + CUDA library for loading and rendering 3D Gaussian Splatting scenes —
-built as a research companion to [VertexNova](https://learnvertexnova.com),
-the multi-backend C++20 rendering engine.
+<p align="center">
+  <a href="https://github.com/vertexnova/vnetemplate/actions/workflows/ci.yml">
+    <img src="https://github.com/vertexnova/vnetemplate/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"/>
+  </a>
+  <img src="https://img.shields.io/badge/C%2B%2B-20-blue.svg" alt="C++ Standard"/>
+  <a href="https://codecov.io/gh/vertexnova/vnetemplate">
+    <img src="https://codecov.io/gh/vertexnova/vnetemplate/branch/main/graph/badge.svg" alt="Coverage"/>
+  </a>
+  <img src="https://img.shields.io/badge/license-Apache%202.0-green.svg" alt="License"/>
+</p>
 
-## First render — garden scene
+---
 
-> 5,834,784 Gaussians · rendered in **133ms** · 1280×720 · DGX Spark GB10
+# VneTemplate
 
-```
-Scene center: [-0.024  1.781  1.432]
-Scene spread: 9.215
-Load time:    0.60s
-Render time:  133.3ms
-Alpha coverage: 64.4%
-```
+Minimal VertexNova-standard C++ template: CMake, deps (external + internal), tests, examples, and documentation. Use it as a starting point for new libraries or apps in the [VertexNova](https://github.com/vertexnova) stack.
 
-## What this is
+## Directory layout
 
-`vne3dgs` provides a clean Python API to:
+| Path | Description |
+|------|-------------|
+| `cmake/vnecmake/` | CMake modules submodule (ProjectSetup, ProjectWarnings, VneUseDep) |
+| `configs/` | Configured headers (e.g. `config.h.in`) |
+| `deps/external/` | Third-party deps (e.g. googletest) |
+| `deps/internal/` | VertexNova internal libs (vnecommon, vnelogging) |
+| `include/` | Public API headers (`vertexnova/template/`) |
+| `src/` | Implementation |
+| `tests/` | Unit tests (Google Test) |
+| `docs/` | Doxygen input (`doxyfile.in`) and extra docs |
+| `scripts/` | Helper scripts (build, format, generate-docs) |
 
-- Load pre-trained 3DGS scenes from standard `.ply` files
-- Render them using [gsplat](https://docs.gsplat.studio) — the CUDA-accelerated differentiable rasterizer
-- Orbit cameras, control viewpoints, composite backgrounds
-- Serve as the Python research layer before the C++/Vulkan integration in VertexNova
+## Prerequisites
 
-## Platform
+- **CMake** 3.19 or newer  
+- **C++20** compiler (e.g. GCC 10+, Clang 10+, MSVC 2019+)  
+- **Doxygen** (optional, for `scripts/generate-docs.sh` and `-DENABLE_DOXYGEN=ON`)
 
-Built and verified on **NVIDIA DGX Spark** (GB10 Grace Blackwell):
+## Dependencies
 
-| Component | Version |
-|-----------|---------|
-| OS | DGX OS 7.4.0 (Ubuntu 24.04) |
-| GPU | NVIDIA GB10 · SM 12.0 |
-| CUDA | 13.0.2 |
-| Driver | 580.142 |
-| Architecture | ARM64 / aarch64 |
-| PyTorch | 2.7.0 (NVIDIA build) |
-| gsplat | 1.5.3 |
-| Container | `vertexnova/gsplat-spark:v2` |
+- **External:** Tests use [Google Test](https://github.com/google/googletest). Either add `deps/external/googletest` as a submodule (recommended tag: `v1.17.0`) or let CMake use FetchContent when the directory is missing.  
+- **Internal:** **vnecmake** (required) is the CMake modules submodule at `cmake/vnecmake`. Optional libraries `vnecommon` and `vnelogging` go under `deps/internal/`. See [deps/README.md](deps/README.md). If they are missing, the template still builds but does not link to `vne::common` or `vne::logging`.
 
-## Install
-
-```bash
-# Requires gsplat — on DGX Spark build from source
-export TORCH_CUDA_ARCH_LIST="12.0"
-pip install git+https://github.com/nerfstudio-project/gsplat.git --no-build-isolation
-
-# Install vne3dgs
-pip install plyfile numpy imageio
-git clone https://github.com/vertexnova/vne3dgs.git
-cd vne3dgs
-```
-
-## Quick start
-
-```python
-from vne3dgs import load_ply, render, make_intrinsics, orbit_camera, scene_center
-import imageio
-
-# Load a pre-trained scene
-scene = load_ply("/path/to/point_cloud.ply")
-print(scene)
-# GaussianScene(n=5,834,784 Gaussians, device=cuda:0)
-
-# Set up camera
-center = scene_center(scene.means)
-K = make_intrinsics(1280, 720, fov_deg=60.0)
-viewmat = orbit_camera(center, radius=18.0, elevation_deg=20.0, azimuth_deg=45.0)
-
-# Render
-image, alpha = render(scene, viewmat, K, width=1280, height=720)
-
-# Save
-imageio.imwrite("render.png", image)
-```
-
-## Demo
+From the project root:
 
 ```bash
-# Render garden scene (download pre-trained models first)
-python demo/render_scene.py \
-  --ply /path/to/garden/point_cloud/iteration_30000/point_cloud.ply \
-  --output output/garden_render.png \
-  --width 1280 \
-  --height 720 \
-  --elevation 20 \
-  --azimuth 45
+git submodule update --init --recursive
 ```
 
-All arguments:
+(Add submodules first if your repo uses them; see `deps/README.md`.)
 
-| Argument | Default | Description |
-|----------|---------|-------------|
-| `--ply` | garden scene | Path to `.ply` file |
-| `--output` | `output/garden_render.png` | Output PNG path |
-| `--width` | 1280 | Image width |
-| `--height` | 720 | Image height |
-| `--fov` | 60.0 | Field of view (degrees) |
-| `--elevation` | 20.0 | Camera elevation (degrees) |
-| `--azimuth` | 45.0 | Camera azimuth (degrees) |
-| `--radius` | auto | Orbit radius (auto = 2× scene spread) |
-| `--device` | cuda | PyTorch device |
+## Build
 
-## Tests
+Builds use **`build/static`** or **`build/shared`** (one library type per directory). From the project root:
 
 ```bash
-python tests/test_loader.py
+# Shared library (default)
+cmake -B build/shared -DCMAKE_BUILD_TYPE=Debug -DVNE_TEMPLATE_TESTS=ON
+cmake --build build/shared
+
+# Static library
+cmake -B build/static -DCMAKE_BUILD_TYPE=Debug -DVNE_TEMPLATE_LIB_TYPE=static -DVNE_TEMPLATE_TESTS=ON
+cmake --build build/static
 ```
 
-```
-========================================
-vne3dgs smoke tests
-========================================
-Device: cuda (NVIDIA GB10)
+Or use the platform scripts (they use `build/<lib_type>/...`):
 
-test_load_ply ...        PASS
-test_scene_stats ...     PASS
-test_make_intrinsics ... PASS
-test_orbit_camera ...    PASS
-test_render_smoke ...    PASS
+```bash
+# macOS (default: shared)
+./scripts/build_macos.sh -t Debug -a configure_and_build
+./scripts/build_macos.sh -l static -t Release -a configure_and_build   # static in build/static/...
 
-All tests passed.
-========================================
-```
+# Linux
+./scripts/build_linux.sh -t Debug -a configure_and_build
+./scripts/build_linux.sh -l static -c clang -a test
 
-## Project structure
-
-```
-vne3dgs/
-├── src/
-│   └── vne3dgs/
-│       ├── __init__.py       # public API
-│       ├── loader.py         # .ply scene loader → GaussianScene
-│       ├── renderer.py       # gsplat rasterization wrapper
-│       └── camera.py         # intrinsics, look_at, orbit_camera
-├── demo/
-│   └── render_scene.py       # CLI render demo
-├── tests/
-│   └── test_loader.py        # smoke tests
-├── output/                   # rendered images (gitignored)
-├── requirements.txt
-└── README.md
+# Windows
+.\scripts\build_windows.ps1 -BuildType Debug -Action configure_and_build
+.\scripts\build_windows.ps1 -LibType static -BuildType Release -Action configure_and_build   # static in build/static/...
 ```
 
-## How it works
+Options: `-t` / `-BuildType` build type, `-a` / `-Action` action, `-l` / `-LibType` lib type (`static` | `shared`, default `shared`), `-clean` / `-Clean`, `-j N` / `-Jobs N`. macOS script also supports `-xcode` for Xcode project.
 
-3DGS represents a scene as millions of 3D Gaussian ellipsoids — each with a position,
-scale, rotation, opacity, and color. Rendering projects these Gaussians onto the image
-plane and alpha-composites them front-to-back using tile-based rasterization.
+## Test
 
-gsplat implements this pipeline in CUDA with differentiable gradients,
-enabling both inference (viewing) and training (optimizing a scene from photos).
+```bash
+ctest -C Debug --test-dir build/shared
+# or for static: ctest -C Debug --test-dir build/static
+```
 
-`vne3dgs` wraps gsplat's `rasterization()` API with a clean interface that loads
-standard `.ply` files and handles the coordinate/data-type conventions automatically
-(log-space scales, logit opacities, SH DC to RGB conversion).
+Or:
 
-## Roadmap
+```bash
+./scripts/build_macos.sh -a test
+```
 
-- [ ] Orbit animation — render full 360° as video
-- [ ] Better camera placement — auto-fit to scene bounds
-- [ ] Spherical harmonics — view-dependent color (beyond DC term)
-- [ ] Vulkan port — real-time C++ renderer in VertexNova
-- [ ] Surgical scene reconstruction — COLMAP + 3DGS on medical data
+## Documentation
 
-## Part of VertexNova
+- **Template overview and diagrams:** [docs/vertexnova/template/template.md](docs/vertexnova/template/template.md) — context and API diagrams (Draw.io sources in `docs/vertexnova/template/diagrams/`).
+- **API docs:** Configure with Doxygen enabled and build the doc target:
 
-| Link | |
-|------|-|
-| Engine docs | [learnvertexnova.com](https://learnvertexnova.com) |
-| Research site | [vertexnova.github.io](https://vertexnova.github.io) |
-| GitHub org | [github.com/vertexnova](https://github.com/vertexnova) |
-| Engine repo | [github.com/vertexnova/vnetestbed](https://github.com/vertexnova/vnetestbed) |
+  ```bash
+  cmake -B build/shared -DENABLE_DOXYGEN=ON
+  cmake --build build/shared --target vnetemplate_doc_doxygen
+  ```
 
-## Author
+  Output: `build/shared/docs/html/index.html`.
 
-**Ajeet Yadav** · Principal Engineer · Stryker  
-M.Tech Signal Processing · IIT Kanpur  
-[linkedin.com/in/ajeet-yadav-b1133991](https://linkedin.com/in/ajeet-yadav-b1133991) ·
-[learnvertexnova.com](https://learnvertexnova.com)
+- **Script:** From project root:
+
+  ```bash
+  ./scripts/generate-docs.sh
+  ```
+
+  Use `--api-only` to only generate API docs, or `--validate` to only check links and coverage. See `./scripts/generate-docs.sh --help`.
+
+## Format and tidy
+
+- **clang-format:** Config in [.clang-format](.clang-format). Format in place or check only (CI):
+  ```bash
+  ./scripts/format.sh          # format sources
+  ./scripts/format.sh -check   # check only (used in CI)
+  ```
+- **clang-tidy:** Config in [.clang-tidy](.clang-tidy). Generate `compile_commands.json` (e.g. `cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -B build/shared`), then run `clang-tidy -p build/shared`.
+
+## CI
+
+GitHub Actions runs on push and pull requests to `main`: format check, clang-tidy, and build/test on Linux (GCC, Clang), macOS, and Windows. See [.github/workflows/ci.yml](.github/workflows/ci.yml).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for build, test, and style. We follow the [Contributor Covenant](CODE_OF_CONDUCT.md) Code of Conduct.
+
+## Releases
+
+Releases are manual. The **VERSION** file at the repo root is the source of truth; CMake reads it at configure time and exposes it as `get_version()`.
+
+To cut a release: update **VERSION**, add a dated entry to **CHANGELOG.md**, commit, create and push a tag (e.g. `git tag v1.0.0 && git push origin v1.0.0`), then create a GitHub Release from that tag and paste the CHANGELOG section.
 
 ## License
 
-MIT
+See [LICENSE](LICENSE).
