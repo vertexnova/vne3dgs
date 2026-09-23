@@ -94,16 +94,12 @@ void writeFloatLE(std::ostream& out, float value) {
     out.write(reinterpret_cast<const char*>(ordered), sizeof(float));
 }
 
-[[nodiscard]] bool readFiniteFloatLE(const std::uint8_t* bytes,
-                                     float& out_value,
-                                     std::size_t vertex,
-                                     const char* property,
-                                     std::string* error) {
+[[nodiscard]] bool readFiniteFloatLE(
+    const std::uint8_t* bytes, float& out_value, std::size_t vertex, const char* property, std::string* error) {
     out_value = readFloatLE(bytes);
     if (!std::isfinite(out_value)) {
         reportError(error,
-                    std::string("non-finite float for property ") + property + " at vertex "
-                        + std::to_string(vertex));
+                    std::string("non-finite float for property ") + property + " at vertex " + std::to_string(vertex));
         return false;
     }
     return true;
@@ -302,8 +298,7 @@ struct PlyHeader {
                                  std::size_t& body_bytes,
                                  std::string* error) {
     const std::size_t bytes_per_vertex = floats_per_vertex * sizeof(float);
-    if (bytes_per_vertex != 0
-        && vertex_count > std::numeric_limits<std::size_t>::max() / bytes_per_vertex) {
+    if (bytes_per_vertex != 0 && vertex_count > std::numeric_limits<std::size_t>::max() / bytes_per_vertex) {
         reportError(error, "PLY body size overflows size_t");
         return false;
     }
@@ -412,8 +407,7 @@ bool readGaussianPly(const std::string& path, GaussianCloud& out, std::string* e
     out.sh().assign(header.vertex_count * static_cast<std::size_t>(coeffs) * 3u, 0.0f);
 
     const auto at = [&](std::size_t vertex, int prop, const char* name, float& value) -> bool {
-        const std::size_t offset =
-            (vertex * floats_per_vertex + static_cast<std::size_t>(prop)) * sizeof(float);
+        const std::size_t offset = (vertex * floats_per_vertex + static_cast<std::size_t>(prop)) * sizeof(float);
         return readFiniteFloatLE(body.data() + offset, value, vertex, name, error);
     };
 

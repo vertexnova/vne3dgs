@@ -16,6 +16,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <string>
 
 #include <gtest/gtest.h>
@@ -175,6 +176,52 @@ TEST(PlyReader, RejectsMissingOpacity) {
     std::string error;
     EXPECT_FALSE(vne::gs::readGaussianPly(path.string(), cloud, &error));
     EXPECT_NE(error.find("opacity"), std::string::npos);
+    std::filesystem::remove(path);
+}
+
+TEST(PlyReader, RejectsNegativeVertexCount) {
+    const auto path = tempPlyPath("negative_count.ply");
+    {
+        std::ofstream out(path);
+        out << "ply\nformat binary_little_endian 1.0\nelement vertex -1\nend_header\n";
+    }
+    vne::gs::GaussianCloud cloud;
+    std::string error;
+    EXPECT_FALSE(vne::gs::readGaussianPly(path.string(), cloud, &error));
+    EXPECT_NE(error.find("vertex count"), std::string::npos);
+    std::filesystem::remove(path);
+}
+
+TEST(PlyReader, RejectsTruncatedBody) {
+    const auto path = tempPlyPath("truncated_body.ply");
+    {
+        std::ofstream out(path, std::ios::binary);
+        writeAsciiHeader(out, 1, 0);
+        // Header claims one vertex but no body floats follow.
+    }
+    vne::gs::GaussianCloud cloud;
+    std::string error;
+    EXPECT_FALSE(vne::gs::readGaussianPly(path.string(), cloud, &error));
+    EXPECT_NE(error.find("truncated"), std::string::npos);
+    std::filesystem::remove(path);
+}
+
+TEST(PlyReader, RejectsNonFiniteFloat) {
+    const auto path = tempPlyPath("nan_body.ply");
+    {
+        std::ofstream out(path, std::ios::binary);
+        writeAsciiHeader(out, 1, 0);
+        const float nan = std::numeric_limits<float>::quiet_NaN();
+        const float zero = 0.0f;
+        const float one = 1.0f;
+        // x y z f_dc_0..2 opacity scale_0..2 rot_0..3  (14 floats)
+        const float values[] = {nan, zero, zero, zero, zero, zero, zero, zero, zero, zero, one, zero, zero, zero};
+        out.write(reinterpret_cast<const char*>(values), sizeof(values));
+    }
+    vne::gs::GaussianCloud cloud;
+    std::string error;
+    EXPECT_FALSE(vne::gs::readGaussianPly(path.string(), cloud, &error));
+    EXPECT_NE(error.find("non-finite"), std::string::npos);
     std::filesystem::remove(path);
 }
 
