@@ -21,5 +21,8 @@
 #include "vertexnova/gs/core/conic.h"
 #include "vertexnova/gs/core/front_to_back_blender.h"
 #include "vertexnova/gs/core/gaussian2d.h"
+#include "vertexnova/gs/core/gaussian3d.h"
+#include "vertexnova/gs/core/gaussian_cloud.h"
+#include "vertexnova/gs/io/ply_reader.h"
 #include "vertexnova/gs/export.h"
 #include "vertexnova/gs/version.h"

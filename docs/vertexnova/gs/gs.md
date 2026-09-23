@@ -40,8 +40,8 @@ graph LR
 |--------|---------|----------|--------|
 | Version | `gs.h`, `version.h`, `export.h` | [Task 00](tasks/00_scaffold.md) | done |
 | 2D Gaussian math | `core/conic.h`, `core/gaussian2d.h`, `core/front_to_back_blender.h` | [Task 01](tasks/01_gaussians_2d.md) | done |
-| 3D Gaussian + covariance | `core/gaussian.h`, `core/covariance.h` | [Task 02](tasks/02_gaussian_3d.md) | planned |
-| Gaussian cloud + PLY reader | `core/gaussian_cloud.h`, `io/ply_reader.h` | [Task 03](tasks/03_ply_loader.md) | planned |
+| 3D Gaussian + covariance | `core/gaussian3d.h` | [Task 02](tasks/02_gaussian_3d.md) | done |
+| Gaussian cloud + PLY reader | `core/gaussian_cloud.h`, `io/ply_reader.h` | [Task 03](tasks/03_ply_loader.md) | done |
 | Camera, image, point renderer | `camera/camera.h`, `camera/conventions.h`, `render/image.h`, `render/cpu/point_renderer.h` | [Task 04](tasks/04_camera_and_points.md) | planned |
 | Projection (EWA) | `render/projection.h` | [Task 05](tasks/05_ewa_projection.md) | planned |
 | Naive CPU renderer | `render/cpu/naive_renderer.h` | [Task 06](tasks/06_sort_and_blend.md) | planned |
@@ -52,6 +52,16 @@ graph LR
 | Backward pass + optimizer | `train/*` | [Task 18](tasks/18_cpp_backward.md) | planned |
 
 ## Conventions (fill in as tasks decide them)
+
+Types are grouped by the render pipeline stage under one namespace `vne::gs`:
+
+| Stage | Type | Header |
+|-------|------|--------|
+| World splat | `Gaussian3D` | `core/gaussian3d.h` |
+| Screen splat | `Gaussian2D` | `core/gaussian2d.h` |
+| Screen inverse | `Conic` | `core/conic.h` |
+| One pixel | `FrontToBackBlender` | `core/front_to_back_blender.h` |
+| Many splats | `GaussianCloud` (SoA) | `core/gaussian_cloud.h` |
 
 | Topic | Decision | Decided in |
 |-------|----------|------------|
