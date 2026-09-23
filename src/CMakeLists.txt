@@ -9,10 +9,16 @@
 #==============================================================================
 
 set(SOURCE_FILES
+    vertexnova/gs/core/conic.cpp
+    vertexnova/gs/core/front_to_back_blender.cpp
+    vertexnova/gs/core/gaussian2d.cpp
     vertexnova/gs/version.cpp
 )
 
 set(HEADER_FILES
+    ${VNE_INCLUDE_DIR}/vertexnova/gs/core/conic.h
+    ${VNE_INCLUDE_DIR}/vertexnova/gs/core/front_to_back_blender.h
+    ${VNE_INCLUDE_DIR}/vertexnova/gs/core/gaussian2d.h
     ${VNE_INCLUDE_DIR}/vertexnova/gs/export.h
     ${VNE_INCLUDE_DIR}/vertexnova/gs/gs.h
     ${VNE_INCLUDE_DIR}/vertexnova/gs/version.h
@@ -62,6 +68,15 @@ if(_lib_type STREQUAL "SHARED")
 endif()
 
 add_library(vne::gs ALIAS vne3dgs)
+
+# C4251 ("class needs to have dll-interface to be used by clients") and C4275
+# (non-dll-interface base class) fire on MSVC shared builds when a
+# `__declspec(dllexport)` type holds vnemath Vec/Mat (or STL). The types are
+# header-only; both DLL and consumer already share the same CRT. PUBLIC so
+# tests and examples that include the exported headers inherit the suppression.
+if(MSVC)
+    target_compile_options(vne3dgs PUBLIC /wd4251 /wd4275)
+endif()
 
 source_group("Sources" FILES ${SOURCE_FILES})
 source_group(TREE ${VNE_INCLUDE_DIR} PREFIX "Headers" FILES ${HEADER_FILES})

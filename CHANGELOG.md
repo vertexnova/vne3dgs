@@ -15,7 +15,7 @@ Releases are managed by release-please from Conventional Commits.
 * initial commit for vne3dgs ([2dd04eb](https://github.com/vertexnova/vne3dgs/commit/2dd04eb8ea6be2a7d2e08bee25eed37e04b1b3f4))
 * intial task planning for the 3dgs ([4109e9c](https://github.com/vertexnova/vne3dgs/commit/4109e9c595c3e92d5fe68cf7892322c43d903b88))
 * setting up the lib ([482883a](https://github.com/vertexnova/vne3dgs/commit/482883a1c9fa2b291f2b38ee9fd532cd25f4f5bd))
-* vne3dgs v0.1.0 — first 3DGS render ([9d24acb](https://github.com/vertexnova/vne3dgs/commit/9d24acb152ceaae9fe3854b151cb1c9ff2d9b93b))
+* vne3dgs v0.1.0 - first 3DGS render ([9d24acb](https://github.com/vertexnova/vne3dgs/commit/9d24acb152ceaae9fe3854b151cb1c9ff2d9b93b))
 
 ## [Unreleased]
 
@@ -29,3 +29,6 @@ Releases are managed by release-please from Conventional Commits.
 
 * Learning roadmap and per-task specs with learning material under `docs/vertexnova/gs/`.
 * vnemath dependency (`deps/internal/vnemath`).
+* 2D Gaussian evaluation, alpha conversion and front-to-back blending (`Conic`, `Gaussian2D`,
+  `FrontToBackBlender`; one type per header) with unit tests and `example_01_gaussians_2d`.
+* Examples-only vneio image dependency for PNG output (`vne::image::image_utils::saveImage`).

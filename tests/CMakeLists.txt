@@ -48,6 +48,9 @@ endif()
 # Test sources
 #==============================================================================
 set(TEST_SOURCES
+    conic_test.cpp
+    front_to_back_blender_test.cpp
+    gaussian2d_test.cpp
     version_test.cpp
 )
 

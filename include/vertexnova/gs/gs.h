@@ -18,5 +18,8 @@
  * @details Each learning task (docs/vertexnova/gs/tasks/) adds its public headers here.
  */
 
+#include "vertexnova/gs/core/conic.h"
+#include "vertexnova/gs/core/front_to_back_blender.h"
+#include "vertexnova/gs/core/gaussian2d.h"
 #include "vertexnova/gs/export.h"
 #include "vertexnova/gs/version.h"

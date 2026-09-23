@@ -1,6 +1,21 @@
 # Vne3dgs Scripts
 
-Build scripts for macOS, Linux, and Windows.
+Build scripts for macOS, Linux, and Windows. Formatting matches vnerhi
+(`scripts/clang_formatter.py`, `scripts/format.sh`).
+
+## Format
+
+C/C++ scope matches CI: `src`, `include`, `examples`, `tests`.
+
+```bash
+python3 scripts/clang_formatter.py all              # format in place
+python3 scripts/clang_formatter.py all --dry-run    # CI-style check
+python3 scripts/clang_formatter.py --file path/to/file.cpp
+./scripts/format.sh                                 # same as `all`
+./scripts/format.sh -check                          # same as `all --dry-run`
+```
+
+CI pins clang-format 17. `.clang-format` is identical to vnerhi.
 
 ## Build Scripts
 
