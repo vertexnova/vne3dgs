@@ -136,18 +136,23 @@ Print statistics once you can load it. Expect:
 
   ```cpp
   namespace vne::gs {
-  [[nodiscard]] constexpr int shCoeffCount(int degree) { return (degree + 1) * (degree + 1); }
+  [[nodiscard]] int shCoeffCount(int degree) noexcept;  // (degree + 1)^2; exported, defined in .cpp
 
-  struct GaussianCloud {                       // all values activated
-      std::vector<math::Vec3f> positions;
-      std::vector<math::Vec3f> scales;
-      std::vector<math::Quatf> rotations;
-      std::vector<float> opacities;
-      std::vector<float> sh;                   // size() * shCoeffCount(sh_degree) * 3, coefficient-major RGB
-      int sh_degree = 0;
+  class GaussianCloud {                        // all values activated
+     public:
+      [[nodiscard]] std::size_t size() const noexcept;
 
-      [[nodiscard]] std::size_t size() const { return positions.size(); }
-      [[nodiscard]] math::Vec3f dcColor(std::size_t i) const;   // 0.5 + C0 * sh[i][0], clamped >= 0
+      [[nodiscard]] std::vector<math::Vec3f>& positions() noexcept;
+      [[nodiscard]] std::vector<math::Vec3f>& scales() noexcept;
+      [[nodiscard]] std::vector<math::Quatf>& rotations() noexcept;
+      [[nodiscard]] std::vector<float>& opacities() noexcept;
+      [[nodiscard]] std::vector<float>& sh() noexcept;  // size() * shCoeffCount(shDegree()) * 3
+
+      [[nodiscard]] int shDegree() const noexcept;
+      void setShDegree(int degree) noexcept;
+
+      [[nodiscard]] math::Vec3f dcColor(std::size_t i) const noexcept;  // max(0, 0.5 + C0 * f_dc)
+      void clear() noexcept;
   };
   }  // namespace vne::gs
   ```

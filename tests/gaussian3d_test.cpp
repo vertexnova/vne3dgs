@@ -120,9 +120,15 @@ TEST(Gaussian3D, ScaleAxesAreEigenvectors) {
             const vne::math::Vec3f column = axes[axis];
             const vne::math::Vec3f applied = sigma * column;
             const float scale_squared = scale[axis] * scale[axis];
-            EXPECT_NEAR(applied.x(), scale_squared * column.x(), 1e-4f);
-            EXPECT_NEAR(applied.y(), scale_squared * column.y(), 1e-4f);
-            EXPECT_NEAR(applied.z(), scale_squared * column.z(), 1e-4f);
+            EXPECT_NEAR(applied.x(),
+                        static_cast<double>(scale_squared) * static_cast<double>(column.x()),
+                        1e-4f);
+            EXPECT_NEAR(applied.y(),
+                        static_cast<double>(scale_squared) * static_cast<double>(column.y()),
+                        1e-4f);
+            EXPECT_NEAR(applied.z(),
+                        static_cast<double>(scale_squared) * static_cast<double>(column.z()),
+                        1e-4f);
         }
     }
 }

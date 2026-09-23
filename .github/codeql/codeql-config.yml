@@ -1,0 +1,8 @@
+# ----------------------------------------------------------------------
+# CodeQL configuration for Vne3dgs — exclude vendored deps from analysis.
+# ----------------------------------------------------------------------
+
+name: vne3dgs CodeQL config
+
+paths-ignore:
+  - "deps/**"
