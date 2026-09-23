@@ -34,7 +34,8 @@ class VNE_GS_API FrontToBackBlender {
    public:
     /**
      * @brief Front-to-back over: `C += T * alpha * radiance`, `T *= (1 - alpha)`.
-     * @return false if this splat would saturate transmittance; radiance is unchanged.
+     * @return false if this splat would saturate transmittance, or if an earlier
+     *         splat already did; radiance is unchanged.
      */
     bool composite(const math::Vec3f& radiance, float alpha) noexcept;
 
@@ -47,6 +48,7 @@ class VNE_GS_API FrontToBackBlender {
    private:
     math::Vec3f radiance_{};
     float transmittance_{1.0f};
+    bool is_saturated_{false};
 };
 
 }  // namespace vne::gs

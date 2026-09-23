@@ -44,7 +44,8 @@ math::Vec2f computeEigenvalues(const math::Mat2f& cov) noexcept {
 
 int computeRadius(const math::Mat2f& cov) noexcept {
     const math::Vec3f e = unpackCov(cov);
-    if (covarianceDet(e) <= 0.0f) {
+    const float det = covarianceDet(e);
+    if (!(det > 0.0f) || !(e.x() > 0.0f)) {
         return 0;
     }
     const float lambda1 = std::max(0.0f, computeEigenvalues(cov).x());

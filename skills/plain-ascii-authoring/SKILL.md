@@ -27,7 +27,7 @@ Do not emit these non-ASCII characters. Replace each with the ASCII form:
 | double arrow | U+21D2 | `=>` |
 | multiplication sign | U+00D7 | `x` |
 | bullet | U+2022 | `-` or `*` in markdown lists |
-| box drawing (any) | U+2500..U+257F | `-`, `|`, or `+` in comment banners |
+| box drawing (any) | U+2500..U+257F | hyphen, vertical bar, or plus in comment banners |
 | non-breaking space | U+00A0 | a normal space |
 | checkmark, cross marks | U+2713 / U+2717 / U+2705 | words: `pass` / `fail`, or `[x]` / `[ ]` |
 

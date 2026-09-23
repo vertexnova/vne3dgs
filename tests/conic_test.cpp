@@ -64,3 +64,9 @@ TEST(Conic, RejectsNonPositiveDefinite) {
 
     EXPECT_FALSE(conic.has_value());
 }
+
+TEST(Conic, RejectsNegativeDefinite) {
+    const std::optional<vne::gs::Conic> conic = vne::gs::computeConic(cov2(-1.0f, 0.0f, -1.0f));
+
+    EXPECT_FALSE(conic.has_value());
+}

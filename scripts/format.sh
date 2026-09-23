@@ -6,4 +6,7 @@ cd "$ROOT"
 if [[ "${1:-}" == "-check" || "${1:-}" == "--check" ]]; then
   exec python3 scripts/clang_formatter.py all --dry-run
 fi
-exec python3 scripts/clang_formatter.py all "$@"
+if [[ $# -eq 0 ]]; then
+  exec python3 scripts/clang_formatter.py all
+fi
+exec python3 scripts/clang_formatter.py "$@"

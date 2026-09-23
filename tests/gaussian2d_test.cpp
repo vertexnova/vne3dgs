@@ -51,6 +51,12 @@ TEST(Gaussian2D, RadiusZeroWhenNonPositiveDefinite) {
     EXPECT_EQ(radius, 0);
 }
 
+TEST(Gaussian2D, RadiusZeroWhenNegativeDefinite) {
+    const int radius = vne::gs::computeRadius(cov2(-1.0f, 0.0f, -1.0f));
+
+    EXPECT_EQ(radius, 0);
+}
+
 TEST(Gaussian2D, AlphaIsCapped) {
     const float alpha = vne::gs::computeAlpha(1.0f, 0.0f);
 

@@ -39,8 +39,8 @@ reference to apply while editing. C++ standard is C++20.
 - One class or struct per header. The file name is the snake_case of the type:
   `Gaussian2D` -> `gaussian2d.h`, `Conic` -> `conic.h`,
   `FrontToBackBlender` -> `front_to_back_blender.h`.
-- Start each file with the project copyright banner block (see any existing
-  header, e.g. the block in the Header File Structure section of the guideline).
+- In headers, `#pragma once` first, then the copyright banner block (see any
+  existing header). Source files start with the copyright banner.
 - Include ordering and self-containment: see [vne-header-hygiene](../vne-header-hygiene/SKILL.md).
   `.clang-format` sets `SortIncludes: false`, so include order is hand-maintained.
 

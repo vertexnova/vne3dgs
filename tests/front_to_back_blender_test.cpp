@@ -67,3 +67,23 @@ TEST(FrontToBackBlender, EarlyTerminationDropsSaturatingSplat) {
     EXPECT_FLOAT_EQ(before.y(), after.y());
     EXPECT_FLOAT_EQ(before.z(), after.z());
 }
+
+TEST(FrontToBackBlender, SaturationRejectsLaterFaintSplat) {
+    const vne::math::Vec3f white(1.0f, 1.0f, 1.0f);
+    const vne::math::Vec3f black(0.0f, 0.0f, 0.0f);
+    vne::gs::FrontToBackBlender compositor;
+
+    ASSERT_TRUE(compositor.composite(white, 0.95f));
+    ASSERT_TRUE(compositor.composite(white, 0.95f));
+    ASSERT_TRUE(compositor.composite(white, 0.95f));
+    ASSERT_FALSE(compositor.composite(white, 0.95f));
+    const vne::math::Vec3f before = compositor.resolve(black);
+    const bool accepted_faint = compositor.composite(white, 0.1f);
+    const vne::math::Vec3f after = compositor.resolve(black);
+
+    EXPECT_FALSE(accepted_faint);
+    EXPECT_NEAR(compositor.transmittance(), 1.25e-4f, 1e-8f);
+    EXPECT_FLOAT_EQ(before.x(), after.x());
+    EXPECT_FLOAT_EQ(before.y(), after.y());
+    EXPECT_FLOAT_EQ(before.z(), after.z());
+}

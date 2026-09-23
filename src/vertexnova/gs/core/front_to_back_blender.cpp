@@ -16,8 +16,12 @@ namespace vne::gs {
 VNE_GS_API const float kTransmittanceEps = 1e-4f;
 
 bool FrontToBackBlender::composite(const math::Vec3f& radiance, float alpha) noexcept {
+    if (is_saturated_) {
+        return false;
+    }
     const float next_transmittance = transmittance_ * (1.0f - alpha);
     if (next_transmittance < kTransmittanceEps) {
+        is_saturated_ = true;
         return false;
     }
     radiance_ += transmittance_ * alpha * radiance;

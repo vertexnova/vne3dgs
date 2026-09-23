@@ -40,7 +40,7 @@ struct Conic {
 
 /**
  * @brief Inverts a 2x2 covariance to a conic.
- * @return The conic, or nullopt if `det(Sigma) <= 0` (not positive definite).
+ * @return The conic, or nullopt if `Sigma` is not positive definite.
  */
 [[nodiscard]] VNE_GS_API std::optional<Conic> computeConic(const math::Mat2f& cov) noexcept;
 

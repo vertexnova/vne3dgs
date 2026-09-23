@@ -27,7 +27,8 @@ namespace {
 std::optional<Conic> computeConic(const math::Mat2f& cov) noexcept {
     const math::Vec3f e = unpackCov(cov);
     const float det = e.x() * e.z() - e.y() * e.y();
-    if (det <= 0.0f) {
+    // SPD: leading minor a > 0 and det > 0. `!(x > 0)` also rejects NaN.
+    if (!(det > 0.0f) || !(e.x() > 0.0f)) {
         return std::nullopt;
     }
     const float inv_det = 1.0f / det;
