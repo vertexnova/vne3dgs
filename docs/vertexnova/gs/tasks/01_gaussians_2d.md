@@ -2,7 +2,7 @@
 
 | Phase | Depends on | Unlocks | Status |
 |-------|------------|---------|--------|
-| 1 — One Gaussian, by hand | [00](00_scaffold.md) | [02](02_gaussian_3d.md) | [ ] |
+| 1 — One Gaussian, by hand | [00](00_scaffold.md) | [02](02_gaussian_3d.md) | [x] |
 
 > **Goal:** draw a few overlapping 2D Gaussians into an image, with the exact per-pixel math the real
 > renderer uses.
@@ -150,32 +150,34 @@ the weights do. That is why 3DGS must sort.
 
 ## Build
 
-- [ ] `include/vertexnova/gs/core/gaussian2d.h`, `src/vertexnova/gs/core/gaussian2d.cpp`
+- [x] One type per file (`conic.h` / `Conic`, `gaussian2d.h` / `Gaussian2D`,
+      `front_to_back_blender.h` / `FrontToBackBlender`):
 
   ```cpp
-  namespace vne::gs {
+  // core/conic.h
   struct Conic { float a, b, c; };                        // Σ⁻¹ = [[a, b], [b, c]]
-  struct Gaussian2D { math::Vec2f mean; math::Mat2f cov; math::Vec3f color; float opacity; };
-
   [[nodiscard]] std::optional<Conic> computeConic(const math::Mat2f& cov);   // nullopt if det <= 0
+  [[nodiscard]] float computePower(const Conic& conic, const math::Vec2f& d);
+
+  // core/gaussian2d.h
+  struct Gaussian2D { math::Vec2f mean; math::Mat2f cov; math::Vec3f color; float opacity; };
   [[nodiscard]] math::Vec2f computeEigenvalues(const math::Mat2f& cov);      // (λ₁, λ₂), λ₁ >= λ₂
   [[nodiscard]] int computeRadius(const math::Mat2f& cov);                   // ceil(3·√λ₁)
-  [[nodiscard]] float computePower(const Conic& conic, const math::Vec2f& d);
   [[nodiscard]] float computeAlpha(float opacity, float power);              // 0 when skipped
 
+  // core/front_to_back_blender.h
   class FrontToBackBlender {                                                  // one pixel
    public:
-      bool add(const math::Vec3f& color, float alpha);  // false once saturated (T < 1e-4)
-      [[nodiscard]] math::Vec3f finish(const math::Vec3f& background) const;
+      bool composite(const math::Vec3f& radiance, float alpha);  // false once saturated (T < 1e-4)
+      [[nodiscard]] math::Vec3f resolve(const math::Vec3f& background) const;
       [[nodiscard]] float transmittance() const;
   };
-  }  // namespace vne::gs
   ```
 
-- [ ] `tests/gaussian2d_test.cpp`
-- [ ] `examples/01_gaussians_2d/`: five hand-placed Gaussians (at least one rotated, two overlapping) on a
+- [x] `tests/conic_test.cpp`, `tests/gaussian2d_test.cpp`, `tests/front_to_back_blender_test.cpp`
+- [x] `examples/01_gaussians_2d/`: five hand-placed Gaussians (at least one rotated, two overlapping) on a
   256×256 image, written to `gaussians_2d.png`, plus a second image with the draw order reversed.
-- [ ] **PNG output:** add vneio as an **examples-only** dependency, image component only
+- [x] **PNG output:** add vneio as an **examples-only** dependency, image component only
   (`-DVNEIO_BUILD_MESH=OFF`), and use `saveImage(path, data, width, height, channels)` from
   `vertexnova/io/image/image.h`. If vneio is too heavy to pull in, vendor `stb_image_write.h` under
   `deps/external/stb/` instead. The core library must not depend on either.
@@ -191,12 +193,12 @@ the weights do. That is why 3DGS must sort.
 | `computeAlpha(1.0, 0.0)` | `0.99` (cap) |
 | `computeAlpha(0.003, 0.0)` | `0` (below 1/255, skipped) |
 | Blending example, both orders | `(0.5, 0.4, 0)` / `(0.1, 0.8, 0)`, `T = 0.1` in both |
-| 20 identical splats with `α = 0.95` | 3 are added (`T` = 0.05, 0.0025, 1.25e-4); the 4th would give 6.25e-6 < 1e-4, so `add` returns `false` and the color stops changing. (Avoid α values that land exactly on 1e-4; float rounding decides those.) |
+| 20 identical splats with `α = 0.95` | 3 are composited (`T` = 0.05, 0.0025, 1.25e-4); the 4th would give 6.25e-6 < 1e-4, so `composite` returns `false` and the radiance stops changing. (Avoid α values that land exactly on 1e-4; float rounding decides those.) |
 
 ## Done when
 
-- [ ] All tests pass, and you worked out the three examples on paper **before** running them.
-- [ ] `gaussians_2d.png` shows five ellipses with the orientations you intended, and the reversed-order
+- [x] All tests pass, and you worked out the three examples on paper **before** running them.
+- [x] `gaussians_2d.png` shows five ellipses with the orientations you intended, and the reversed-order
   image differs only where splats overlap.
 
 ## Check yourself
@@ -229,4 +231,19 @@ the weights do. That is why 3DGS must sort.
 
 ## My notes
 
-_Fill in after finishing._
+Pixel centers are `(i + 0.5, j + 0.5)`. The worked examples
+treat a pixel as an integer point (`d = (2, 0)` for pixel `(12, 10)` vs μ `(10, 10)`); the unit tests
+call `computePower` with that `d` directly. The example renderer uses the half-pixel convention.
+
+PNG output uses vneio's image component only (`VNEIO_BUILD_MESH=OFF`) via
+`vne::image::image_utils::saveImage`. The core library does not link vneio. CMake looks in
+`deps/internal/vneio`, then `deps/external/vneio`, then a sibling `../vneio`.
+
+The compositor's "saturated" check is on `next_T = T · (1 − α)`, not on `T` itself. After three α=0.95
+splats, `T = 1.25e-4` which is still above `1e-4`; the fourth is the one that is dropped.
+
+`computeRadius` returns 0 when `det ≤ 0`. You can also recover the screen radius from the conic
+alone: `λmax(Σ) = 1 / λmin(conic)`.
+
+Order changes color weights `αᵢ Tᵢ` but not `T_final = Π(1 − αᵢ)`. That is why the reversed PNG
+differs only in the overlap.

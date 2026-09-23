@@ -9,9 +9,10 @@
  * ----------------------------------------------------------------------
  */
 
-#include <gtest/gtest.h>
 #include "vertexnova/gs/gs.h"
 #include "config.h"
+
+#include <gtest/gtest.h>
 
 TEST(Vne3dgsVersion, IsNotEmpty) {
     const char* ver = vne::gs::getVersion();

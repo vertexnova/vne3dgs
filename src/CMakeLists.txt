@@ -9,10 +9,16 @@
 #==============================================================================
 
 set(SOURCE_FILES
+    vertexnova/gs/core/conic.cpp
+    vertexnova/gs/core/front_to_back_blender.cpp
+    vertexnova/gs/core/gaussian2d.cpp
     vertexnova/gs/version.cpp
 )
 
 set(HEADER_FILES
+    ${VNE_INCLUDE_DIR}/vertexnova/gs/core/conic.h
+    ${VNE_INCLUDE_DIR}/vertexnova/gs/core/front_to_back_blender.h
+    ${VNE_INCLUDE_DIR}/vertexnova/gs/core/gaussian2d.h
     ${VNE_INCLUDE_DIR}/vertexnova/gs/export.h
     ${VNE_INCLUDE_DIR}/vertexnova/gs/gs.h
     ${VNE_INCLUDE_DIR}/vertexnova/gs/version.h

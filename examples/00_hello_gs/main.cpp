@@ -10,6 +10,7 @@
  */
 
 #include "common/logging_guard.h"
+
 #include "vertexnova/gs/gs.h"
 
 int main() {

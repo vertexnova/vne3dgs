@@ -32,7 +32,7 @@ Status key: `[ ]` not started · `[~]` in progress · `[x]` done
 
 | # | Task | Status |
 |---|------|--------|
-| 01 | [2D Gaussians and alpha blending](tasks/01_gaussians_2d.md) | [ ] |
+| 01 | [2D Gaussians and alpha blending](tasks/01_gaussians_2d.md) | [x] |
 | 02 | [The 3D Gaussian](tasks/02_gaussian_3d.md) | [ ] |
 
 ### Phase 2 — Real data
@@ -130,7 +130,7 @@ Each task names its files. The overall shape the tasks build toward:
 
 ```
 include/vertexnova/gs/
-├── core/        gaussian2d.h, gaussian.h, covariance.h, gaussian_cloud.h, sh.h
+├── core/        conic.h, gaussian2d.h, front_to_back_blender.h, gaussian.h, covariance.h, gaussian_cloud.h, sh.h
 ├── io/          ply_reader.h, colmap_reader.h
 ├── camera/      camera.h, conventions.h
 └── render/      image.h, projection.h, tiling.h

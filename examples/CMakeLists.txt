@@ -10,5 +10,9 @@ endif()
 # 00 - Hello: minimal usage of vne::gs (getVersion)
 add_subdirectory(00_hello_gs)
 
-# Each learning task adds its example here, e.g.:
-# add_subdirectory(01_gaussians_2d)   # Task 01
+# 01 - 2D Gaussians: evaluate, alpha-blend, write PNG via vneio
+if(TARGET vne::io::image)
+    add_subdirectory(01_gaussians_2d)
+else()
+    message(STATUS "Skipping example_01_gaussians_2d (vne::io::image not found)")
+endif()

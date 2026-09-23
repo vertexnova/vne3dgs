@@ -1,4 +1,4 @@
-# vne3dgs (`vne::gs`) — Library Overview
+# vne3dgs (`vne::gs`) - Library Overview
 
 **vne3dgs** implements 3D Gaussian Splatting on the VertexNova stack. It is built one learning task at a
 time (see the [roadmap](roadmap.md)), so this page describes what exists **today** and what is planned.
@@ -39,7 +39,7 @@ graph LR
 | Module | Headers | Added in | Status |
 |--------|---------|----------|--------|
 | Version | `gs.h`, `version.h`, `export.h` | [Task 00](tasks/00_scaffold.md) | done |
-| 2D Gaussian math | `core/gaussian2d.h` | [Task 01](tasks/01_gaussians_2d.md) | planned |
+| 2D Gaussian math | `core/conic.h`, `core/gaussian2d.h`, `core/front_to_back_blender.h` | [Task 01](tasks/01_gaussians_2d.md) | done |
 | 3D Gaussian + covariance | `core/gaussian.h`, `core/covariance.h` | [Task 02](tasks/02_gaussian_3d.md) | planned |
 | Gaussian cloud + PLY reader | `core/gaussian_cloud.h`, `io/ply_reader.h` | [Task 03](tasks/03_ply_loader.md) | planned |
 | Camera, image, point renderer | `camera/camera.h`, `camera/conventions.h`, `render/image.h`, `render/cpu/point_renderer.h` | [Task 04](tasks/04_camera_and_points.md) | planned |
@@ -47,7 +47,7 @@ graph LR
 | Naive CPU renderer | `render/cpu/naive_renderer.h` | [Task 06](tasks/06_sort_and_blend.md) | planned |
 | Tiling + tiled CPU renderer | `render/tiling.h`, `render/cpu/tile_renderer.h` | [Task 07](tasks/07_tile_renderer.md) | planned |
 | Spherical harmonics | `core/sh.h` | [Task 08](tasks/08_spherical_harmonics.md) | planned |
-| GPU renderers | `render/gpu/*` (target `vne3dgs_gpu`) | Tasks [09](tasks/09_viewer_shell.md)–[13](tasks/13_tile_rasterizer_gpu.md) | planned |
+| GPU renderers | `render/gpu/*` (target `vne3dgs_gpu`) | Tasks [09](tasks/09_viewer_shell.md) to [13](tasks/13_tile_rasterizer_gpu.md) | planned |
 | COLMAP reader | `io/colmap_reader.h` | [Task 15](tasks/15_colmap_cameras.md) | planned |
 | Backward pass + optimizer | `train/*` | [Task 18](tasks/18_cpp_backward.md) | planned |
 
@@ -60,6 +60,6 @@ graph LR
 | Gaussian storage | Struct-of-arrays in `GaussianCloud` (GPU-upload friendly) | Task 03 |
 | Quaternion order | PLY stores `w,x,y,z`; `vne::math::Quat` constructor takes `(x, y, z, w)` | Task 03 |
 | Camera axes | _to decide_: OpenCV (+X right, +Y down, +Z forward) is what 3DGS data uses | Task 04 |
-| Pixel centers | _to decide_: pixel `(i, j)` covers `[i, i+1) × [j, j+1)`, center at `i + 0.5` or `i` | Task 04 |
+| Pixel centers | pixel `(i, j)` sampled at `(i + 0.5, j + 0.5)` (provisional; Task 04 freezes it) | Task 01 |
 | Color space | Linear-ish RGB as trained (3DGS applies no sRGB transform); write PNGs as-is | Task 06 |
-| Tile size | 16 × 16 pixels | Task 07 |
+| Tile size | 16 x 16 pixels | Task 07 |

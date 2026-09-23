@@ -23,7 +23,8 @@ if(NOT DEFINED PROJECT_VERSION_INIT)
     set(PROJECT_VERSION_INIT "1.0.0")
 endif()
 
-project(vne3dgs VERSION ${PROJECT_VERSION_INIT} LANGUAGES CXX)
+# C is required by vneio's NrrdIO (examples-only image component).
+project(vne3dgs VERSION ${PROJECT_VERSION_INIT} LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -204,6 +205,85 @@ function(_vne3dgs_configure_vnemath_dep)
 endfunction()
 _vne3dgs_configure_vnemath_dep()
 
+# vneio is examples-only (PNG via vne::image::image_utils::saveImage). The core
+# library does not link it. Called later, after VNE_GS_EXAMPLES is resolved.
+function(_vne3dgs_configure_vneio_dep)
+    if(TARGET vne::io::image)
+        message(STATUS "Vne3dgs: using vne::io::image from parent")
+        return()
+    endif()
+
+    if(VNE_GS_LIB_TYPE STREQUAL "shared")
+        set(VNEIO_LIB_TYPE "shared" CACHE STRING
+            "VneIo library type (vne3dgs sets shared when VNE_GS_LIB_TYPE is shared)" FORCE)
+    elseif(VNE_GS_LIB_TYPE STREQUAL "static")
+        set(VNEIO_LIB_TYPE "static" CACHE STRING
+            "VneIo library type (vne3dgs sets static when VNE_GS_LIB_TYPE is static)" FORCE)
+    endif()
+
+    set(VNEIO_DEV OFF CACHE BOOL "OFF when vneio is a dep of vne3dgs" FORCE)
+    set(VNEIO_CI ON CACHE BOOL "CI-style: no vneio tests/examples" FORCE)
+    set(VNEIO_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(VNEIO_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(VNEIO_BUILD_MESH OFF CACHE BOOL "Mesh (Assimp) not needed for vne3dgs examples" FORCE)
+    set(VNEIO_BUILD_IMAGE ON CACHE BOOL "" FORCE)
+    # Reuse this repo's vnecommon/vnelogging instead of vneio's nested copies.
+    set(VNEIO_DEPS_INTERNAL_DIR "${VNE_DEPS_INTERNAL_DIR}" CACHE PATH "" FORCE)
+
+    set(_vneio_cache_vars
+        BUILD_TESTS OFF BUILD_EXAMPLES OFF
+        VNEIO_DEV OFF VNEIO_CI ON
+        VNEIO_BUILD_TESTS OFF VNEIO_BUILD_EXAMPLES OFF
+        VNEIO_BUILD_MESH OFF VNEIO_BUILD_IMAGE ON
+        VNEIO_LIB_TYPE "${VNE_GS_LIB_TYPE}")
+
+    get_property(_vg_build_tests_ty CACHE BUILD_TESTS PROPERTY TYPE)
+    if(NOT _vg_build_tests_ty STREQUAL "NOTFOUND" AND _vg_build_tests_ty)
+        set(_vg_build_tests_saved "${BUILD_TESTS}")
+    endif()
+    get_property(_vg_build_examples_ty CACHE BUILD_EXAMPLES PROPERTY TYPE)
+    if(NOT _vg_build_examples_ty STREQUAL "NOTFOUND" AND _vg_build_examples_ty)
+        set(_vg_build_examples_saved "${BUILD_EXAMPLES}")
+    endif()
+    set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+
+    vne_use_dep(TARGET vne::io::image
+        SUBDIR "${VNE_DEPS_INTERNAL_DIR}/vneio"
+        BINARY_DIR "${CMAKE_BINARY_DIR}/deps/internal/vneio"
+        CACHE_VARS ${_vneio_cache_vars})
+    if(NOT TARGET vne::io::image)
+        vne_use_dep(TARGET vne::io::image
+            SUBDIR "${VNE_DEPS_EXTERNAL_DIR}/vneio"
+            BINARY_DIR "${CMAKE_BINARY_DIR}/deps/external/vneio"
+            CACHE_VARS ${_vneio_cache_vars})
+    endif()
+    if(NOT TARGET vne::io::image)
+        vne_use_dep(TARGET vne::io::image
+            SUBDIR "${PROJECT_SOURCE_DIR}/../vneio"
+            BINARY_DIR "${CMAKE_BINARY_DIR}/vneio"
+            CACHE_VARS ${_vneio_cache_vars})
+    endif()
+
+    if(DEFINED _vg_build_tests_saved)
+        set(BUILD_TESTS "${_vg_build_tests_saved}" CACHE BOOL "" FORCE)
+    else()
+        unset(BUILD_TESTS CACHE)
+    endif()
+    if(DEFINED _vg_build_examples_saved)
+        set(BUILD_EXAMPLES "${_vg_build_examples_saved}" CACHE BOOL "" FORCE)
+    else()
+        unset(BUILD_EXAMPLES CACHE)
+    endif()
+
+    if(NOT TARGET vne::io::image)
+        message(WARNING
+            "Vne3dgs: vneio (image) not found. PNG examples will be skipped. "
+            "Add deps/internal/vneio (https://github.com/vertexnova/vneio.git) "
+            "and init nrrdio: git -C deps/internal/vneio submodule update --init deps/external/nrrdio")
+    endif()
+endfunction()
+
 # Include dirs and config
 set(VNE_INCLUDE_DIR ${PROJECT_SOURCE_DIR}/include)
 set(VNE_SRC_DIR ${PROJECT_SOURCE_DIR}/src)
@@ -359,6 +439,7 @@ endif()
 # Examples
 #==============================================================================
 if(VNE_GS_EXAMPLES)
+    _vne3dgs_configure_vneio_dep()
     add_subdirectory(examples)
 endif()
 
