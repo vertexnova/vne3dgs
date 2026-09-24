@@ -49,8 +49,8 @@ ImageRGBf renderPoints(const GaussianCloud& cloud,
         // a huge coordinate from a near-plane-grazing point would overflow int.
         const float px = std::floor(projected->pixel.x());
         const float py = std::floor(projected->pixel.y());
-        if (!(px >= -static_cast<float>(radius) && px < static_cast<float>(width + radius) &&
-              py >= -static_cast<float>(radius) && py < static_cast<float>(height + radius))) {
+        if (!(px >= -static_cast<float>(radius) && px < static_cast<float>(width + radius)
+              && py >= -static_cast<float>(radius) && py < static_cast<float>(height + radius))) {
             continue;
         }
 
@@ -67,8 +67,7 @@ ImageRGBf renderPoints(const GaussianCloud& cloud,
         for (int y = y0; y <= y1; ++y) {
             for (int x = x0; x <= x1; ++x) {
                 const std::size_t index =
-                    static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
-                    static_cast<std::size_t>(x);
+                    static_cast<std::size_t>(y) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x);
                 if (!(z < depth[index])) {
                     continue;
                 }
