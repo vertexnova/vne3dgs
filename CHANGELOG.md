@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Releases are managed by release-please from Conventional Commits.
 
+## [0.4.0](https://github.com/vertexnova/vne3dgs/compare/v0.3.0...v0.4.0) (2026-09-24)
+
+
+### Features
+
+* complete 3D Gaussian and PLY loader implementation ([#5](https://github.com/vertexnova/vne3dgs/issues/5)) ([bc0f095](https://github.com/vertexnova/vne3dgs/commit/bc0f095f44efb3d5788299885e06c1f31d1756d9))
+
 ## [0.3.0](https://github.com/vertexnova/vne3dgs/compare/v0.2.0...v0.3.0) (2026-09-23)
 
 
