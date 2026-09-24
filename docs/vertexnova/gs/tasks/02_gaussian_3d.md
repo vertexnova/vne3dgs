@@ -2,7 +2,7 @@
 
 | Phase | Depends on | Unlocks | Status |
 |-------|------------|---------|--------|
-| 1 — One Gaussian, by hand | [01](01_gaussians_2d.md) | [03](03_ply_loader.md) | [ ] |
+| 1 — One Gaussian, by hand | [01](01_gaussians_2d.md) | [03](03_ply_loader.md) | [x] |
 
 > **Goal:** build a 3D covariance from a scale and a quaternion, and understand why 3DGS parametrizes it
 > that way.
@@ -105,29 +105,25 @@ The long axis (σ = 2, originally along x) now points along y. ✓
 
 ## Build
 
-- [ ] `include/vertexnova/gs/core/gaussian.h`: one Gaussian, array-of-structs, for clarity.
+- [x] `include/vertexnova/gs/core/gaussian3d.h` + `src/vertexnova/gs/core/gaussian3d.cpp`
 
   ```cpp
   namespace vne::gs {
-  struct Gaussian {
+  struct Gaussian3D {
       math::Vec3f position;
       math::Vec3f scale;        // activated: linear, > 0
       math::Quatf rotation;     // activated: unit length
       float opacity = 1.0f;     // activated: (0, 1)
       math::Vec3f color;        // placeholder until SH in Task 08
   };
-  }  // namespace vne::gs
-  ```
 
-- [ ] `include/vertexnova/gs/core/covariance.h` + `src/vertexnova/gs/core/covariance.cpp`
-
-  ```cpp
-  [[nodiscard]] math::Mat3f quatToRotationMatrix(float w, float x, float y, float z);   // normalizes
+  [[nodiscard]] math::Mat3f quatToRotationMatrix(const math::Quatf& rotation);   // normalizes
   [[nodiscard]] math::Mat3f computeCovariance3D(const math::Vec3f& scale, const math::Quatf& rotation);
-  [[nodiscard]] std::array<float, 6> packSymmetric(const math::Mat3f& m);  // (00, 01, 02, 11, 12, 22)
+  [[nodiscard]] std::array<float, 6> packSymmetricCovariance(const math::Mat3f& m);  // (00, 01, 02, 11, 12, 22)
+  }
   ```
 
-- [ ] `tests/covariance_test.cpp`
+- [x] `tests/gaussian3d_test.cpp`
 
 ## Test
 
@@ -144,8 +140,8 @@ The long axis (σ = 2, originally along x) now points along y. ✓
 
 ## Done when
 
-- [ ] All tests pass.
-- [ ] You can explain, without notes, why 3DGS optimizes `(log s, q)` instead of `Σ`.
+- [x] All tests pass.
+- [x] You can explain, without notes, why 3DGS optimizes `(log s, q)` instead of `Σ`.
 
 ## Check yourself
 
@@ -176,4 +172,14 @@ The long axis (σ = 2, originally along x) now points along y. ✓
 
 ## My notes
 
-_Fill in after finishing._
+`quatToRotationMatrix` takes a `Quatf`, which stores `(x, y, z, w)` with `w` last. PLY files store
+`w` first, so that conversion has to happen at load time (Task 03). The matrix is column-major:
+column *i* is the local axis after rotation, and `Σ · rᵢ = sᵢ² · rᵢ`.
+
+The reference CUDA builds `R` by passing the row-major formula into GLM's column-major `mat3`
+constructor, so the stored matrix is `Rᵀ`. Then `M = S * R_stored` and `Sigma = Mᵀ M` recover
+`R · S · Sᵀ · Rᵀ` because `S` is diagonal. CPU code calls `Quatf::normalized().toMatrix3()`
+(which is the same GLM cast) and multiplies `(R · S)(R · S)ᵀ`.
+
+`packSymmetricCovariance` stores the upper triangle `(Σ00, Σ01, Σ02, Σ11, Σ12, Σ22)`, read as `m[col][row]`.
+A zero-length quaternion becomes the identity, matching `Quatf::normalized()`.

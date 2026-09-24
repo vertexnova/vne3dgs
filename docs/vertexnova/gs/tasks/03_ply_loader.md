@@ -2,7 +2,7 @@
 
 | Phase | Depends on | Unlocks | Status |
 |-------|------------|---------|--------|
-| 2 — Real data | [02](02_gaussian_3d.md) | [04](04_camera_and_points.md) | [ ] |
+| 2 — Real data | [02](02_gaussian_3d.md) | [04](04_camera_and_points.md) | [x] |
 
 > **Goal:** load a real trained 3DGS scene (millions of Gaussians) into a GPU-friendly struct-of-arrays,
 > applying each parameter's activation correctly.
@@ -132,27 +132,32 @@ Print statistics once you can load it. Expect:
 
 ## Build
 
-- [ ] `include/vertexnova/gs/core/gaussian_cloud.h`
+- [x] `include/vertexnova/gs/core/gaussian_cloud.h`
 
   ```cpp
   namespace vne::gs {
-  [[nodiscard]] constexpr int shCoeffCount(int degree) { return (degree + 1) * (degree + 1); }
+  [[nodiscard]] int shCoeffCount(int degree) noexcept;  // (degree + 1)^2; exported, defined in .cpp
 
-  struct GaussianCloud {                       // all values activated
-      std::vector<math::Vec3f> positions;
-      std::vector<math::Vec3f> scales;
-      std::vector<math::Quatf> rotations;
-      std::vector<float> opacities;
-      std::vector<float> sh;                   // size() * shCoeffCount(sh_degree) * 3, coefficient-major RGB
-      int sh_degree = 0;
+  class GaussianCloud {                        // all values activated
+     public:
+      [[nodiscard]] std::size_t size() const noexcept;
 
-      [[nodiscard]] std::size_t size() const { return positions.size(); }
-      [[nodiscard]] math::Vec3f dcColor(std::size_t i) const;   // 0.5 + C0 * sh[i][0], clamped >= 0
+      [[nodiscard]] std::vector<math::Vec3f>& positions() noexcept;
+      [[nodiscard]] std::vector<math::Vec3f>& scales() noexcept;
+      [[nodiscard]] std::vector<math::Quatf>& rotations() noexcept;
+      [[nodiscard]] std::vector<float>& opacities() noexcept;
+      [[nodiscard]] std::vector<float>& sh() noexcept;  // size() * shCoeffCount(shDegree()) * 3
+
+      [[nodiscard]] int shDegree() const noexcept;
+      void setShDegree(int degree) noexcept;
+
+      [[nodiscard]] math::Vec3f dcColor(std::size_t i) const noexcept;  // max(0, 0.5 + C0 * f_dc)
+      void clear() noexcept;
   };
   }  // namespace vne::gs
   ```
 
-- [ ] `include/vertexnova/gs/io/ply_reader.h` + `src/vertexnova/gs/io/ply_reader.cpp`
+- [x] `include/vertexnova/gs/io/ply_reader.h` + `src/vertexnova/gs/io/ply_reader.cpp`
 
   ```cpp
   [[nodiscard]] bool readGaussianPly(const std::string& path, GaussianCloud& out, std::string* error = nullptr);
@@ -162,10 +167,10 @@ Print statistics once you can load it. Expect:
   The writer undoes the activations (`log`, `logit`, w-first quaternion, channel-major `f_rest`). It makes
   round-trip tests and fixtures trivial, and Task 16's Python trainer writes the same layout.
 
-- [ ] `testdata/three_gaussians.ply`: 3 Gaussians with chosen values, written once by a small test helper
+- [x] `testdata/three_gaussians.ply`: 3 Gaussians with chosen values, written once by a small test helper
   or by hand. Record how it was made in `testdata/README.md`.
-- [ ] `tests/ply_reader_test.cpp`
-- [ ] `examples/03_ply_stats/`: `example_03_ply_stats <file.ply>` prints the count, SH degree, load time,
+- [x] `tests/ply_reader_test.cpp`
+- [x] `examples/03_ply_stats/`: `example_03_ply_stats <file.ply>` prints the count, SH degree, load time,
   min/max and 1st/99th-percentile bounds, the median position, a 10-bin opacity histogram and log-scale
   statistics.
 
@@ -187,10 +192,10 @@ Print statistics once you can load it. Expect:
 
 ## Done when
 
-- [ ] Tests pass.
+- [x] Tests pass.
 - [ ] `example_03_ply_stats` loads the garden scene (`garden/point_cloud/iteration_30000/point_cloud.ply`
   from the Inria pre-trained models; the Python prototype reported 5,834,784 Gaussians) in a few seconds,
-  and the statistics match what §7 predicts.
+  and the statistics match what §7 predicts. (Run when the file is available locally.)
 
 ## Check yourself
 
@@ -221,4 +226,10 @@ Print statistics once you can load it. Expect:
 
 ## My notes
 
-_Fill in after finishing._
+`GaussianCloud` is SoA (not `vector<Gaussian3D>`). The reader finds properties by name, activates
+`exp` / sigmoid / normalize, and remaps PLY `(w,x,y,z)` into `Quatf(x,y,z,w)`. `f_rest` is
+channel-major in the file and coefficient-major RGB in memory; the pattern test catches a missed
+transpose before Task 08. `writeGaussianPly` undoes activations for round-trips.
+
+Garden timing was not run here: the pretrained PLY is outside the repo. Use
+`example_03_ply_stats <path-to-point_cloud.ply>` when it is available.

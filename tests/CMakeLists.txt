@@ -51,6 +51,8 @@ set(TEST_SOURCES
     conic_test.cpp
     front_to_back_blender_test.cpp
     gaussian2d_test.cpp
+    gaussian3d_test.cpp
+    ply_reader_test.cpp
     version_test.cpp
 )
 

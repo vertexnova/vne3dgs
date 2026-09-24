@@ -16,3 +16,6 @@ if(TARGET vne::io::image)
 else()
     message(STATUS "Skipping example_01_gaussians_2d (vne::io::image not found)")
 endif()
+
+# 03 - PLY stats: load a trained scene and print bounds / histograms
+add_subdirectory(03_ply_stats)
