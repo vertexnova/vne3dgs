@@ -2,7 +2,7 @@
 
 | Phase | Depends on | Unlocks | Status |
 |-------|------------|---------|--------|
-| 3 — CPU reference renderer | [03](03_ply_loader.md) | [05](05_ewa_projection.md), [09](09_viewer_shell.md), [15](15_colmap_cameras.md) | [ ] |
+| 3 — CPU reference renderer | [03](03_ply_loader.md) | [05](05_ewa_projection.md), [09](09_viewer_shell.md), [15](15_colmap_cameras.md) | [x] |
 
 > **Goal:** put a camera in the scene and draw every Gaussian center as a dot. Fix the library's coordinate
 > conventions for good.
@@ -102,39 +102,81 @@ later renderer against.
 
 ## Build
 
-- [ ] `include/vertexnova/gs/camera/camera.h` + `.cpp`
+- [x] `include/vertexnova/gs/camera/camera.h` + `.cpp`
 
   ```cpp
   namespace vne::gs {
-  struct Intrinsics {
-      float fx, fy, cx, cy;
-      std::uint32_t width, height;
-      [[nodiscard]] static Intrinsics fromFovY(float fovy_rad, std::uint32_t width, std::uint32_t height);
+  struct ProjectedPoint { math::Vec2f pixel; float depth; };
+
+  class Intrinsics {
+   public:
+      constexpr Intrinsics(float fx, float fy, float cx, float cy, std::uint32_t w, std::uint32_t h);
+      static Intrinsics fromFovY(float fovy_rad, std::uint32_t width, std::uint32_t height);
+      constexpr float fx() const, fy() const, cx() const, cy() const;
+      constexpr std::uint32_t width() const, height() const;
+      void setFocalLength(float fx, float fy);
+      void setPrincipalPoint(float cx, float cy);
+      void setResolution(std::uint32_t width, std::uint32_t height);
+      constexpr std::size_t pixelCount() const;     // widened; large images cannot overflow
+      constexpr bool isValid() const;               // fx, fy, width, height all > 0
+      float fovYRad() const;                        // inverse of fromFovY
   };
-  struct Camera {                                   // OpenCV convention
-      math::Mat3f rotation;                         // world → camera
-      math::Vec3f translation;                      // world → camera
-      Intrinsics intrinsics;
-      [[nodiscard]] math::Vec3f position() const;   // −Rᵀ t
+
+  class Camera {                                    // OpenCV convention
+   public:
+      static constexpr float kDefaultNearZ = 0.2f;
+      constexpr Camera(const math::Mat3f& rotation, const math::Vec3f& translation, const Intrinsics&);
+      static Camera lookAt(eye, target, up, intrinsics);
+      static Camera orbit(center, radius, azimuth_rad, elevation_rad, up, intrinsics);
+      // accessors: rotation(), translation(), intrinsics() + setters
+      math::Vec3f position() const;                                   // −Rᵀ t
+      math::Vec3f worldToCamera(const math::Vec3f& p_world) const;     // R p + t
+      std::optional<math::Vec2f> cameraToPixel(const math::Vec3f& p_cam, float near_z = kDefaultNearZ) const;
+      std::optional<math::Vec2f> projectToPixel(const math::Vec3f& p_world, float near_z = kDefaultNearZ) const;
+      std::optional<ProjectedPoint> project(const math::Vec3f& p_world, float near_z = kDefaultNearZ) const;
   };
-  [[nodiscard]] math::Vec3f worldToCamera(const Camera& cam, const math::Vec3f& p_world);
-  [[nodiscard]] std::optional<math::Vec2f> projectToPixel(const Camera& cam, const math::Vec3f& p_world,
-                                                          float near_z = 0.2f);
-  [[nodiscard]] Camera lookAt(const math::Vec3f& eye, const math::Vec3f& target, const math::Vec3f& up,
-                              const Intrinsics& intrinsics);
-  [[nodiscard]] Camera orbit(const math::Vec3f& center, float radius, float azimuth_rad, float elevation_rad,
-                             const math::Vec3f& up, const Intrinsics& intrinsics);
   }  // namespace vne::gs
   ```
 
-- [ ] `include/vertexnova/gs/camera/conventions.h`: `openGLToOpenCV()` (`diag(1, −1, −1)`) and a
+  Renderers call `project()`, not `projectToPixel()`: it transforms the point **once** and hands back
+  the depth a z-buffer or sort key needs. Applying the extrinsics and then re-projecting doubles the
+  transform cost over millions of Gaussians. The near test is written `!(z > near_z)` so a NaN depth is
+  culled rather than projected. `isValid()` exists because a degenerate field of view silently
+  collapses every point onto the principal point; `renderPoints` returns an empty image instead.
+
+- [x] `include/vertexnova/gs/camera/conventions.h`: `openGLToOpenCV()` (`diag(1, −1, −1)`) and a
   one-paragraph comment stating the library's conventions.
-- [ ] `include/vertexnova/gs/render/image.h`: `struct ImageRGBf { std::uint32_t width, height;
-  std::vector<float> rgb; }` plus `toRGBA8(clamp)`. Every CPU renderer returns one.
-- [ ] `include/vertexnova/gs/render/cpu/point_renderer.h`: `ImageRGBf renderPoints(const GaussianCloud&,
+- [x] `include/vertexnova/gs/render/image.h`: `class ImageRGBf` plus a `image_utils` namespace for
+  the conversions. Every CPU renderer returns one.
+
+  ```cpp
+  class ImageRGBf {
+   public:
+      static constexpr std::size_t kChannels = 3;
+      ImageRGBf(std::uint32_t width, std::uint32_t height);
+      ImageRGBf(std::uint32_t width, std::uint32_t height, const math::Vec3f& color);
+      std::uint32_t width() const, height() const;
+      std::size_t pixelCount() const;  bool isEmpty() const;
+      void resize(std::uint32_t width, std::uint32_t height);
+      void fill(const math::Vec3f& color);
+      std::span<const float> data() const;  std::span<float> data();
+      math::Vec3f pixel(std::uint32_t x, std::uint32_t y) const;          // bounds-checked
+      void setPixel(std::uint32_t x, std::uint32_t y, const math::Vec3f&); // bounds-checked
+  };
+
+  namespace image_utils {
+  std::vector<std::uint8_t> toRGBA8(const ImageRGBf& image);   // clamp to [0,1], 8-bit, opaque alpha
+  std::vector<std::uint8_t> toRGB8(const ImageRGBf& image);
+  }
+  ```
+
+  The class owns the relationship between its dimensions and its buffer, which is the whole reason it
+  is a class: a plain struct with public `width`, `height` and `rgb` lets a caller set dimensions that
+  disagree with the buffer, and `toRGBA8` then reads past the end.
+- [x] `include/vertexnova/gs/render/cpu/point_renderer.h`: `ImageRGBf renderPoints(const GaussianCloud&,
   const Camera&, const math::Vec3f& background)`.
-- [ ] `tests/camera_test.cpp`
-- [ ] `examples/04_point_cloud/`: `example_04_point_cloud <file.ply> [--up +y|-y|+z] [--az deg]
+- [x] `tests/camera_test.cpp`
+- [x] `examples/04_point_cloud/`: `example_04_point_cloud <file.ply> [--up +y|-y|+z] [--az deg]
   [--el deg] [--radius r]` → `points.png`.
 
 ## Test
@@ -151,13 +193,19 @@ later renderer against.
 | `position()` of `lookAt(eye, ...)` | equals `eye` |
 | `openGLToOpenCV()²` | identity |
 | `fromFovY(90°, 200, 100)` | `fy = 50`, `fx = 50`, `cx = 100`, `cy = 50` |
+| `project()` vs `projectToPixel()` | same pixel; `project()` also returns camera-space `z` |
+| `project()` with a NaN depth | `nullopt` |
+| `fromFovY(0°, …)` or a zero focal length | `isValid()` false |
+| `lookAt` with `up` parallel to the view direction | finite orthonormal `R` (`R·Rᵀ = I`), no NaNs |
+| `lookAt(eye == target, up == 0)` | no NaNs in `R` |
+| `fromFovY(fovy).fovYRad()` | round-trips to `fovy` |
 
 ## Done when
 
-- [ ] Tests pass.
-- [ ] `points.png` shows the garden as a recognizable point cloud (table, vase, grass), right side up,
+- [x] Tests pass.
+- [x] `points.png` shows the garden as a recognizable point cloud (table, vase, grass), right side up,
   from at least two viewpoints.
-- [ ] Your chosen conventions are written in [gs.md](../gs.md).
+- [x] Your chosen conventions are written in [gs.md](../gs.md).
 
 ## Check yourself
 
@@ -186,4 +234,11 @@ later renderer against.
 
 ## My notes
 
-_Fill in after finishing._
+Chose a separate `gs::Camera` (OpenCV R/t + fx/fy) rather than reusing vnescene's perspective/ortho
+cameras: wrong convention (GL −Z look), wrong params (FOV/clip vs intrinsics), and would pull vnescene
+into the headless core. vnescene reuse is deferred to Task 09 via `toGsCamera` / `scene_camera_bridge.h`.
+vnescene default = OpenGL RH; bridge = `openGLToOpenCV()` = `diag(1,−1,−1)`.
+
+A point lands in pixel `(floor(u), floor(v))`, which is what the half-pixel-center convention implies:
+pixel `i` covers `[i, i+1)`, so `u = 3.6` belongs to pixel 3. Rounding to the *nearest* integer instead
+would put it in pixel 4 and shift the whole image half a pixel against the stated convention.

@@ -41,7 +41,7 @@ graph LR
 | Version | `gs.h`, `version.h`, `export.h` | [Task 00](tasks/00_scaffold.md) | done |
 | 2D Gaussian math | `core/conic.h`, `core/gaussian2d.h`, `core/front_to_back_blender.h` | [Task 01](tasks/01_gaussians_2d.md) | done |
 | 3D Gaussian + covariance | `core/gaussian3d.h` | [Task 02](tasks/02_gaussian_3d.md) | done |
-| Gaussian cloud + PLY reader | `core/gaussian_cloud.h`, `io/ply_reader.h` | [Task 03](tasks/03_ply_loader.md) | done |
+| Gaussian cloud + PLY I/O | `core/gaussian_cloud.h`, `io/ply_reader.h`, `io/ply_writer.h` | [Task 03](tasks/03_ply_loader.md) | done |
 | Camera, image, point renderer | `camera/camera.h`, `camera/conventions.h`, `render/image.h`, `render/cpu/point_renderer.h` | [Task 04](tasks/04_camera_and_points.md) | done |
 | Projection (EWA) | `render/projection.h` | [Task 05](tasks/05_ewa_projection.md) | planned |
 | Naive CPU renderer | `render/cpu/naive_renderer.h` | [Task 06](tasks/06_sort_and_blend.md) | planned |
@@ -55,19 +55,23 @@ graph LR
 
 Types are grouped by the render pipeline stage under one namespace `vne::gs`:
 
-| Stage | Type | Header |
-|-------|------|--------|
-| World splat | `Gaussian3D` | `core/gaussian3d.h` |
-| Screen splat | `Gaussian2D` | `core/gaussian2d.h` |
-| Screen inverse | `Conic` | `core/conic.h` |
-| One pixel | `FrontToBackBlender` | `core/front_to_back_blender.h` |
-| Many splats | `GaussianCloud` (SoA) | `core/gaussian_cloud.h` |
+| Stage | Type | Header | Linkage |
+|-------|------|--------|---------|
+| World splat | `Gaussian3D` | `core/gaussian3d.h` | exported |
+| Screen splat | `Gaussian2D` | `core/gaussian2d.h` | header-only |
+| Screen inverse | `Conic` | `core/conic.h` | header-only |
+| One pixel | `FrontToBackBlender` | `core/front_to_back_blender.h` | header-only |
+| Many splats | `GaussianCloud` (SoA) | `core/gaussian_cloud.h` | exported |
+| Camera | `Camera`, `Intrinsics` | `camera/camera.h` | exported, projection inline |
+| Image | `ImageRGBf` + `image_utils` | `render/image.h` | exported |
+| Scene I/O | `PlyReader`, `PlyWriter` | `io/ply_reader.h`, `io/ply_writer.h` | exported |
 
 | Topic | Decision | Decided in |
 |-------|----------|------------|
 | Namespace / target | `vne::gs`, target `vne3dgs`, options `VNE_GS_*` | Task 00 |
 | Scalar type | `float` everywhere on the render path | Task 01 |
-| Gaussian storage | Struct-of-arrays in `GaussianCloud` (GPU-upload friendly) | Task 03 |
+| Gaussian storage | Struct-of-arrays in `GaussianCloud` (GPU-upload friendly), with the column-length invariant enforced by the class: mutable access is `std::span`, reshaping only via `resize` / `setShDegree` | Task 03 |
+| Free functions vs methods | Per-pixel math stays stateless and header-only so it inlines and ports to a GPU kernel unchanged (`Conic::power`, `Gaussian2D::alphaFromPower`). Classes own the state and the invariants (`GaussianCloud`, `ImageRGBf`, `Camera`). Polymorphism is reserved for the renderer seam, where dispatch is once per frame. | Task 04 |
 | Quaternion order | PLY stores `w,x,y,z`; `vne::math::Quat` constructor takes `(x, y, z, w)` | Task 03 |
 | Camera axes | **OpenCV inside `vne::gs`**: +X right, +Y down, +Z forward (matches COLMAP / 3DGS). vnescene defaults to OpenGL RH (+Y up, look −Z); convert at the viewer boundary (Task 09) with `diag(1, −1, −1)` / `openGLToOpenCV()`. vnemath projection helpers are GraphicsApi-aware (OpenGL depth [−1,1]; Vulkan/Metal [0,1]) — not OpenCV camera space. | Task 04 |
 | Pixel centers | pixel `(i, j)` covers `[i, i+1) × [j, j+1)`; center / sample at `(i + 0.5, j + 0.5)` | Task 04 |

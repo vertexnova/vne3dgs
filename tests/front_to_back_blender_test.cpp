@@ -87,3 +87,26 @@ TEST(FrontToBackBlender, SaturationRejectsLaterFaintSplat) {
     EXPECT_FLOAT_EQ(before.y(), after.y());
     EXPECT_FLOAT_EQ(before.z(), after.z());
 }
+
+TEST(FrontToBackBlender, ReportsSaturation) {
+    vne::gs::FrontToBackBlender blender;
+    EXPECT_FALSE(blender.isSaturated());
+
+    // Three alpha=0.95 splats leave T = 1.25e-4, still above the epsilon.
+    for (int i = 0; i < 3; ++i) {
+        EXPECT_TRUE(blender.composite(vne::math::Vec3f(1.0f, 1.0f, 1.0f), 0.95f));
+        EXPECT_FALSE(blender.isSaturated());
+    }
+    EXPECT_NEAR(blender.transmittance(), 1.25e-4f, 1e-9f);
+
+    // The fourth would give 6.25e-6, below the epsilon, so it is dropped.
+    EXPECT_FALSE(blender.composite(vne::math::Vec3f(1.0f, 1.0f, 1.0f), 0.95f));
+    EXPECT_TRUE(blender.isSaturated());
+    EXPECT_NEAR(blender.transmittance(), 1.25e-4f, 1e-9f);
+}
+
+TEST(FrontToBackBlender, EpsilonIsACompileTimeConstant) {
+    static_assert(vne::gs::FrontToBackBlender::kTransmittanceEps == 1e-4f,
+                  "the epsilon must fold at compile time for the inner loop");
+    EXPECT_FLOAT_EQ(vne::gs::FrontToBackBlender::kTransmittanceEps, 1e-4f);
+}

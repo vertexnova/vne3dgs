@@ -151,28 +151,49 @@ the weights do. That is why 3DGS must sort.
 ## Build
 
 - [x] One type per file (`conic.h` / `Conic`, `gaussian2d.h` / `Gaussian2D`,
-      `front_to_back_blender.h` / `FrontToBackBlender`):
+      `front_to_back_blender.h` / `FrontToBackBlender`). All three are **header-only**: their
+      per-pixel math has to inline, and an exported out-of-line definition would put a cross-library
+      call in the innermost loop of Tasks 06, 07 and 13.
 
   ```cpp
   // core/conic.h
-  struct Conic { float a, b, c; };                        // Σ⁻¹ = [[a, b], [b, c]]
-  [[nodiscard]] std::optional<Conic> computeConic(const math::Mat2f& cov);   // nullopt if det <= 0
-  [[nodiscard]] float computePower(const Conic& conic, const math::Vec2f& d);
+  class Conic {                                    // Σ⁻¹ = [[a, b], [b, c]]
+   public:
+      constexpr Conic(float a, float b, float c);  // from stored / GPU-side coefficients
+      static constexpr std::optional<Conic> fromCovariance(const math::Mat2f& cov);  // nullopt if not SPD
+      constexpr float a() const, b() const, c() const;
+      constexpr float power(const math::Vec2f& d) const;   // −½ dᵀ Σ⁻¹ d, 0 at the mean
+  };
 
   // core/gaussian2d.h
-  struct Gaussian2D { math::Vec2f mean; math::Mat2f cov; math::Vec3f color; float opacity; };
-  [[nodiscard]] math::Vec2f computeEigenvalues(const math::Mat2f& cov);      // (λ₁, λ₂), λ₁ >= λ₂
-  [[nodiscard]] int computeRadius(const math::Mat2f& cov);                   // ceil(3·√λ₁)
-  [[nodiscard]] float computeAlpha(float opacity, float power);              // 0 when skipped
+  class Gaussian2D {
+   public:
+      static constexpr float kMaxAlpha = 0.99f, kMinAlpha = 1.0f / 255.0f, kRadiusSigma = 3.0f;
+      Gaussian2D(mean, cov, color, opacity);
+      // accessors: mean/covariance/color/opacity + setMean/setCovariance/setColor/setOpacity
+      std::optional<Conic> conic() const;                  // nullopt when degenerate
+      math::Vec2f eigenvalues() const;                     // (λ₁, λ₂), λ₁ >= λ₂
+      int radius() const;                                  // ceil(3·√λ₁), 0 when degenerate
+      float alphaAt(const Conic& conic, const math::Vec2f& pixel) const;
+      // stateless, GPU-portable primitives:
+      static math::Vec2f eigenvaluesOf(const math::Mat2f& cov);
+      static int radiusOf(const math::Mat2f& cov);
+      static float alphaFromPower(float opacity, float power);   // 0 when skipped
+  };
 
   // core/front_to_back_blender.h
-  class FrontToBackBlender {                                                  // one pixel
+  class FrontToBackBlender {                               // one pixel
    public:
-      bool composite(const math::Vec3f& radiance, float alpha);  // false once saturated (T < 1e-4)
+      static constexpr float kTransmittanceEps = 1e-4f;
+      bool composite(const math::Vec3f& radiance, float alpha);  // false once saturated
       [[nodiscard]] math::Vec3f resolve(const math::Vec3f& background) const;
       [[nodiscard]] float transmittance() const;
+      [[nodiscard]] bool isSaturated() const;
   };
   ```
+
+  Pass the conic into `alphaAt` rather than letting it recompute: a splat is inverted once and then
+  evaluated over its whole footprint.
 
 - [x] `tests/conic_test.cpp`, `tests/gaussian2d_test.cpp`, `tests/front_to_back_blender_test.cpp`
 - [x] `examples/01_gaussians_2d/`: five hand-placed Gaussians (at least one rotated, two overlapping) on a
@@ -242,8 +263,13 @@ PNG output uses vneio's image component only (`VNEIO_BUILD_MESH=OFF`) via
 The compositor's "saturated" check is on `next_T = T · (1 − α)`, not on `T` itself. After three α=0.95
 splats, `T = 1.25e-4` which is still above `1e-4`; the fourth is the one that is dropped.
 
-`computeRadius` returns 0 when `det ≤ 0`. You can also recover the screen radius from the conic
-alone: `λmax(Σ) = 1 / λmin(conic)`.
+`Gaussian2D::radiusOf` returns 0 when the covariance is not positive definite. You can also recover
+the screen radius from the conic alone: `λmax(Σ) = 1 / λmin(conic)`.
+
+`Conic::fromCovariance` tests positive definiteness with Sylvester's criterion (`a > 0` **and**
+`det > 0`), written as `!(x > 0)` so a NaN entry is rejected instead of slipping through. It averages
+the two off-diagonals, so a covariance left slightly asymmetric by a projection Jacobian's round-off
+still yields a symmetric conic.
 
 Order changes color weights `αᵢ Tᵢ` but not `T_final = Π(1 − αᵢ)`. That is why the reversed PNG
 differs only in the overlap.

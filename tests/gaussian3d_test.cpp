@@ -11,6 +11,7 @@
 
 #include "vertexnova/gs/core/gaussian3d.h"
 
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <random>
@@ -46,11 +47,11 @@ namespace {
 
 TEST(Gaussian3D, IdentityRotationIsAxisAligned) {
     const vne::math::Vec3f scale(2.0f, 1.0f, 0.5f);
-    const vne::math::Mat3f sigma = vne::gs::computeCovariance3D(scale, vne::math::Quatf::identity());
+    const vne::math::Mat3f sigma = vne::gs::Gaussian3D::covarianceOf(scale, vne::math::Quatf::identity());
 
     EXPECT_TRUE(nearMatrix(sigma, diagonal(4.0f, 1.0f, 0.25f), 1e-6f));
 
-    const std::array<float, 6> packed = vne::gs::packSymmetricCovariance(sigma);
+    const std::array<float, 6> packed = vne::gs::Gaussian3D::packSymmetric(sigma);
     EXPECT_NEAR(packed[0], 4.0f, 1e-6f);
     EXPECT_NEAR(packed[1], 0.0f, 1e-6f);
     EXPECT_NEAR(packed[2], 0.0f, 1e-6f);
@@ -63,11 +64,11 @@ TEST(Gaussian3D, QuarterTurnAboutZSwapsTheLongAxis) {
     // 90 degrees about +z: q = (cos 45, 0, 0, sin 45), scalar part first.
     constexpr float kHalfTurn = 0.70710678118f;
     const vne::math::Quatf rotation(0.0f, 0.0f, kHalfTurn, kHalfTurn);
-    const vne::math::Mat3f sigma = vne::gs::computeCovariance3D(vne::math::Vec3f(2.0f, 1.0f, 0.5f), rotation);
+    const vne::math::Mat3f sigma = vne::gs::Gaussian3D::covarianceOf(vne::math::Vec3f(2.0f, 1.0f, 0.5f), rotation);
 
     EXPECT_TRUE(nearMatrix(sigma, diagonal(1.0f, 4.0f, 0.25f), 1e-5f));
 
-    const std::array<float, 6> packed = vne::gs::packSymmetricCovariance(sigma);
+    const std::array<float, 6> packed = vne::gs::Gaussian3D::packSymmetric(sigma);
     EXPECT_NEAR(packed[0], 1.0f, 1e-5f);
     EXPECT_NEAR(packed[3], 4.0f, 1e-5f);
     EXPECT_NEAR(packed[5], 0.25f, 1e-5f);
@@ -85,7 +86,7 @@ TEST(Gaussian3D, RandomCovariancesAreSymmetricAndPositiveSemiDefinite) {
             rotation = vne::math::Quatf::identity();
         }
 
-        const vne::math::Mat3f sigma = vne::gs::computeCovariance3D(scale, rotation);
+        const vne::math::Mat3f sigma = vne::gs::Gaussian3D::covarianceOf(scale, rotation);
         for (std::size_t col = 0; col < 3; ++col) {
             for (std::size_t row = 0; row < 3; ++row) {
                 EXPECT_NEAR(sigma[col][row], sigma[row][col], 1e-5f);
@@ -114,8 +115,8 @@ TEST(Gaussian3D, ScaleAxesAreEigenvectors) {
             continue;
         }
 
-        const vne::math::Mat3f axes = vne::gs::quatToRotationMatrix(rotation);
-        const vne::math::Mat3f sigma = vne::gs::computeCovariance3D(scale, rotation);
+        const vne::math::Mat3f axes = vne::gs::Gaussian3D::rotationMatrixOf(rotation);
+        const vne::math::Mat3f sigma = vne::gs::Gaussian3D::covarianceOf(scale, rotation);
         for (std::size_t axis = 0; axis < 3; ++axis) {
             const vne::math::Vec3f column = axes[axis];
             const vne::math::Vec3f applied = sigma * column;
@@ -142,7 +143,7 @@ TEST(Gaussian3D, MatchesQuatToMatrixOnRandomQuaternions) {
             continue;
         }
 
-        const vne::math::Mat3f ours = vne::gs::quatToRotationMatrix(rotation);
+        const vne::math::Mat3f ours = vne::gs::Gaussian3D::rotationMatrixOf(rotation);
         const vne::math::Mat3f reference = rotation.normalized().toMatrix3();
         EXPECT_TRUE(nearMatrix(ours, reference, 1e-5f));
         ++compared;
@@ -152,29 +153,49 @@ TEST(Gaussian3D, MatchesQuatToMatrixOnRandomQuaternions) {
 TEST(Gaussian3D, NegatedQuaternionIsTheSameRotation) {
     const vne::math::Quatf positive_q(-0.4f, 0.5f, 0.1f, 0.2f);
     const vne::math::Quatf negative_q(0.4f, -0.5f, -0.1f, -0.2f);
-    const vne::math::Mat3f positive = vne::gs::quatToRotationMatrix(positive_q);
-    const vne::math::Mat3f negative = vne::gs::quatToRotationMatrix(negative_q);
+    const vne::math::Mat3f positive = vne::gs::Gaussian3D::rotationMatrixOf(positive_q);
+    const vne::math::Mat3f negative = vne::gs::Gaussian3D::rotationMatrixOf(negative_q);
 
     EXPECT_TRUE(nearMatrix(positive, negative, 1e-6f));
 }
 
 TEST(Gaussian3D, UnnormalizedRealQuaternionIsIdentity) {
     const vne::math::Quatf unnormalized(0.0f, 0.0f, 0.0f, 2.0f);
-    const vne::math::Mat3f rotation = vne::gs::quatToRotationMatrix(unnormalized);
+    const vne::math::Mat3f rotation = vne::gs::Gaussian3D::rotationMatrixOf(unnormalized);
 
     EXPECT_TRUE(nearMatrix(rotation, vne::math::Mat3f{}, 1e-6f));
 }
 
 TEST(Gaussian3D, ActivatedScaleAndRotationBuildCovariance) {
+    const vne::gs::Gaussian3D gaussian(vne::math::Vec3f(1.0f, 2.0f, 3.0f),
+                                       vne::math::Vec3f(2.0f, 1.0f, 0.5f),
+                                       vne::math::Quatf::identity(),
+                                       0.8f,
+                                       vne::math::Vec3f(1.0f, 0.0f, 0.0f));
+
+    EXPECT_TRUE(nearMatrix(gaussian.covariance(), diagonal(4.0f, 1.0f, 0.25f), 1e-6f));
+    EXPECT_TRUE(nearMatrix(gaussian.rotationMatrix(), vne::math::Mat3f{}, 1e-6f));
+    EXPECT_FLOAT_EQ(gaussian.opacity(), 0.8f);
+    EXPECT_FLOAT_EQ(gaussian.position().y(), 2.0f);
+    EXPECT_FLOAT_EQ(gaussian.color().x(), 1.0f);
+
+    const std::array<float, 6> packed = gaussian.packedCovariance();
+    EXPECT_NEAR(packed[0], 4.0f, 1e-6f);
+    EXPECT_NEAR(packed[3], 1.0f, 1e-6f);
+    EXPECT_NEAR(packed[5], 0.25f, 1e-6f);
+}
+
+TEST(Gaussian3D, SettersRoundTrip) {
     vne::gs::Gaussian3D gaussian;
-    gaussian.position = vne::math::Vec3f(1.0f, 2.0f, 3.0f);
-    gaussian.scale = vne::math::Vec3f(2.0f, 1.0f, 0.5f);
-    gaussian.rotation = vne::math::Quatf::identity();
-    gaussian.opacity = 0.8f;
-    gaussian.color = vne::math::Vec3f(1.0f, 0.0f, 0.0f);
+    gaussian.setPosition(vne::math::Vec3f(1.0f, 2.0f, 3.0f));
+    gaussian.setScale(vne::math::Vec3f(2.0f, 1.0f, 0.5f));
+    gaussian.setRotation(vne::math::Quatf::identity());
+    gaussian.setOpacity(0.25f);
+    gaussian.setColor(vne::math::Vec3f(0.1f, 0.2f, 0.3f));
 
-    const vne::math::Mat3f sigma = vne::gs::computeCovariance3D(gaussian.scale, gaussian.rotation);
-
-    EXPECT_TRUE(nearMatrix(sigma, diagonal(4.0f, 1.0f, 0.25f), 1e-6f));
-    EXPECT_FLOAT_EQ(gaussian.opacity, 0.8f);
+    EXPECT_FLOAT_EQ(gaussian.position().z(), 3.0f);
+    EXPECT_FLOAT_EQ(gaussian.scale().x(), 2.0f);
+    EXPECT_FLOAT_EQ(gaussian.opacity(), 0.25f);
+    EXPECT_FLOAT_EQ(gaussian.color().z(), 0.3f);
+    EXPECT_TRUE(nearMatrix(gaussian.covariance(), diagonal(4.0f, 1.0f, 0.25f), 1e-6f));
 }

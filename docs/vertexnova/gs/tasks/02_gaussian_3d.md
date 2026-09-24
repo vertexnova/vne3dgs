@@ -109,19 +109,27 @@ The long axis (σ = 2, originally along x) now points along y. ✓
 
   ```cpp
   namespace vne::gs {
-  struct Gaussian3D {
-      math::Vec3f position;
-      math::Vec3f scale;        // activated: linear, > 0
-      math::Quatf rotation;     // activated: unit length
-      float opacity = 1.0f;     // activated: (0, 1)
-      math::Vec3f color;        // placeholder until SH in Task 08
-  };
+  class Gaussian3D {
+   public:
+      Gaussian3D(position, scale, rotation, opacity, color);
+      // accessors: position/scale/rotation/opacity/color + the matching setters.
+      // scale is activated (linear, > 0); rotation is a unit quaternion; opacity is in (0, 1);
+      // color is a placeholder until SH in Task 08.
 
-  [[nodiscard]] math::Mat3f quatToRotationMatrix(const math::Quatf& rotation);   // normalizes
-  [[nodiscard]] math::Mat3f computeCovariance3D(const math::Vec3f& scale, const math::Quatf& rotation);
-  [[nodiscard]] std::array<float, 6> packSymmetricCovariance(const math::Mat3f& m);  // (00, 01, 02, 11, 12, 22)
+      math::Mat3f rotationMatrix() const;                  // this splat's R
+      math::Mat3f covariance() const;                      // Σ = R S Sᵀ Rᵀ
+      std::array<float, 6> packedCovariance() const;
+
+      // stateless primitives, reused by the cloud and by the GPU path:
+      static math::Mat3f rotationMatrixOf(const math::Quatf& rotation);        // normalizes
+      static math::Mat3f covarianceOf(const math::Vec3f& scale, const math::Quatf& rotation);
+      static std::array<float, 6> packSymmetric(const math::Mat3f& m);  // (00, 01, 02, 11, 12, 22)
+  };
   }
   ```
+
+  `GaussianCloud::gaussian(i)` (Task 03) gathers one splat out of the struct-of-arrays into this
+  type, so single-splat math and bulk storage share one vocabulary.
 
 - [x] `tests/gaussian3d_test.cpp`
 
@@ -172,8 +180,8 @@ The long axis (σ = 2, originally along x) now points along y. ✓
 
 ## My notes
 
-`quatToRotationMatrix` takes a `Quatf`, which stores `(x, y, z, w)` with `w` last. PLY files store
-`w` first, so that conversion has to happen at load time (Task 03). The matrix is column-major:
+`Gaussian3D::rotationMatrixOf` takes a `Quatf`, which stores `(x, y, z, w)` with `w` last. PLY files
+store `w` first, so that conversion has to happen at load time (Task 03). The matrix is column-major:
 column *i* is the local axis after rotation, and `Σ · rᵢ = sᵢ² · rᵢ`.
 
 The reference CUDA builds `R` by passing the row-major formula into GLM's column-major `mat3`
@@ -181,5 +189,5 @@ constructor, so the stored matrix is `Rᵀ`. Then `M = S * R_stored` and `Sigma 
 `R · S · Sᵀ · Rᵀ` because `S` is diagonal. CPU code calls `Quatf::normalized().toMatrix3()`
 (which is the same GLM cast) and multiplies `(R · S)(R · S)ᵀ`.
 
-`packSymmetricCovariance` stores the upper triangle `(Σ00, Σ01, Σ02, Σ11, Σ12, Σ22)`, read as `m[col][row]`.
+`Gaussian3D::packSymmetric` stores the upper triangle `(Σ00, Σ01, Σ02, Σ11, Σ12, Σ22)`, read as `m[col][row]`.
 A zero-length quaternion becomes the identity, matching `Quatf::normalized()`.

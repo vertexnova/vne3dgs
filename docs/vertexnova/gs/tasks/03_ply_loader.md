@@ -136,36 +136,94 @@ Print statistics once you can load it. Expect:
 
   ```cpp
   namespace vne::gs {
-  [[nodiscard]] int shCoeffCount(int degree) noexcept;  // (degree + 1)^2; exported, defined in .cpp
+  [[nodiscard]] int shCoeffCount(int degree) noexcept;  // (degree + 1)^2, degree clamped to [0, 3]
 
   class GaussianCloud {                        // all values activated
      public:
-      [[nodiscard]] std::size_t size() const noexcept;
+      static constexpr int kMaxShDegree = 3;
+      static constexpr std::size_t kChannels = 3;
 
-      [[nodiscard]] std::vector<math::Vec3f>& positions() noexcept;
-      [[nodiscard]] std::vector<math::Vec3f>& scales() noexcept;
-      [[nodiscard]] std::vector<math::Quatf>& rotations() noexcept;
-      [[nodiscard]] std::vector<float>& opacities() noexcept;
-      [[nodiscard]] std::vector<float>& sh() noexcept;  // size() * shCoeffCount(shDegree()) * 3
+      [[nodiscard]] std::size_t size() const noexcept;
+      [[nodiscard]] bool isEmpty() const noexcept;
+
+      void resize(std::size_t count);   // every column together; SH keeps its prefix
+      void reserve(std::size_t count);
+      void clear() noexcept;
 
       [[nodiscard]] int shDegree() const noexcept;
-      void setShDegree(int degree) noexcept;
+      void setShDegree(int degree);     // clamps, and reshapes (and zeroes) the SH array
+      [[nodiscard]] int shCoeffCount() const noexcept;
+
+      // Mutable access is a span: writes in place, but cannot resize one column
+      // out from under the others.
+      [[nodiscard]] std::span<const math::Vec3f> positions() const noexcept;
+      [[nodiscard]] std::span<math::Vec3f> positions() noexcept;
+      // ... scales(), rotations(), opacities(), sh() likewise
+
+      [[nodiscard]] math::Vec3f shCoefficient(std::size_t i, int k) const noexcept;
+      void setShCoefficient(std::size_t i, int k, const math::Vec3f& rgb) noexcept;
 
       [[nodiscard]] math::Vec3f dcColor(std::size_t i) const noexcept;  // max(0, 0.5 + C0 * f_dc)
-      void clear() noexcept;
+      [[nodiscard]] Gaussian3D gaussian(std::size_t i) const noexcept;  // gather one splat
+      [[nodiscard]] bool isConsistent() const noexcept;                 // for asserts across an ABI
   };
   }  // namespace vne::gs
   ```
 
-- [x] `include/vertexnova/gs/io/ply_reader.h` + `src/vertexnova/gs/io/ply_reader.cpp`
+  **The invariant is the point.** `size()` is meaningless unless every column has that length and
+  `sh()` has exactly `size() * shCoeffCount() * 3` entries. Handing out `std::vector&` would let a
+  caller resize one column alone and leave `scales()[i]` undefined behaviour, so the class hands out
+  spans and owns `resize`/`setShDegree` itself. Index access (`shCoefficient`, `dcColor`,
+  `gaussian`) is bounds-checked and returns a zero value rather than reading past the end.
+
+- [x] `io/ply_reader.h` / `PlyReader` and `io/ply_writer.h` / `PlyWriter`, over a private
+      `src/.../io/ply_format.h` that models the whole PLY header
 
   ```cpp
+  struct PlyReadOptions {
+      bool skip_non_finite = true;      // drop NaN splats instead of failing the load
+      std::size_t chunk_bytes = 4 << 20;  // body is streamed, never buffered whole
+  };
+  struct PlyReadStats {
+      std::size_t declared_vertex_count, loaded_vertex_count, skipped_non_finite;
+      int sh_degree;
+  };
+
+  class PlyReader {
+   public:
+      explicit PlyReader(const PlyReadOptions& options);
+      [[nodiscard]] bool read(const std::string& path, GaussianCloud& out_cloud);
+      [[nodiscard]] const PlyReadStats& stats() const noexcept;
+      [[nodiscard]] const std::string& error() const noexcept;
+  };
+
+  class PlyWriter {                     // PlyWriteOptions { chunk_bytes, write_normals }
+   public:
+      [[nodiscard]] bool write(const std::string& path, const GaussianCloud& cloud);
+      [[nodiscard]] const std::string& error() const noexcept;
+  };
+
+  // Convenience wrappers with default options:
   [[nodiscard]] bool readGaussianPly(const std::string& path, GaussianCloud& out, std::string* error = nullptr);
   [[nodiscard]] bool writeGaussianPly(const std::string& path, const GaussianCloud& cloud, std::string* error = nullptr);
   ```
 
   The writer undoes the activations (`log`, `logit`, w-first quaternion, channel-major `f_rest`). It makes
   round-trip tests and fixtures trivial, and Task 16's Python trainer writes the same layout.
+
+  **Four things the reader has to get right, none of them obvious from the format:**
+
+  1. **Element order.** The `vertex` body does not start at `end_header`: every element declared
+     before it sits in between. Parse *all* elements and every scalar type, sum the preceding
+     elements' `count × stride`, and seek past it. A reader that assumes `vertex` comes first will
+     happily return another element's bytes as Gaussians, with no error at all.
+  2. **The declared count sizes an allocation.** Check it against the real file length before
+     resizing, or a corrupt header can ask for gigabytes the file cannot back.
+  3. **Non-finite values are a policy, not an error.** Third-party scenes contain the occasional NaN
+     splat. Dropping those and reporting the count beats rejecting the whole file.
+  4. **Failure must not touch the destination.** Assemble into a local cloud and move it into place
+     only once the whole body is consumed; otherwise a mid-file failure leaves the caller holding a
+     cloud that reports the full `size()` with a garbage tail.
 
 - [x] `testdata/three_gaussians.ply`: 3 Gaussians with chosen values, written once by a small test helper
   or by hand. Record how it was made in `testdata/README.md`.
@@ -189,13 +247,24 @@ Print statistics once you can load it. Expect:
 | `format ascii 1.0` or big-endian | error (not supported) |
 | Missing `opacity` | error |
 | Round trip: write → read | values equal to 1e-6 (relative) |
+| An `element camera 1` declared **before** `element vertex` | vertex values still correct (the preceding element's bytes are skipped, not read as Gaussians) |
+| A list-property element before `vertex` | error: its length is unknowable, so guessing is worse than refusing |
+| Extra `uchar` / `double` / `int` properties interleaved in `vertex` | ignored; the Gaussian values are still correct |
+| Header declaring 100M vertices in a 1-vertex file | error before any large allocation |
+| One NaN Gaussian among three | loads 2, `stats().skipped_non_finite == 1`, survivors keep their order |
+| Same file with `skip_non_finite = false` | error naming the vertex |
+| Failed load into an already-populated cloud | destination unchanged and still consistent |
+| `chunk_bytes = 1` | identical result to a single-chunk read |
 
 ## Done when
 
 - [x] Tests pass.
-- [ ] `example_03_ply_stats` loads the garden scene (`garden/point_cloud/iteration_30000/point_cloud.ply`
-  from the Inria pre-trained models; the Python prototype reported 5,834,784 Gaussians) in a few seconds,
-  and the statistics match what §7 predicts. (Run when the file is available locally.)
+- [x] Garden-scale load measured on a synthetic 5,834,784-Gaussian degree-3 file (1,447 MB), Release,
+  macOS/clang: **709 ms, 1.38 GB peak RSS**. Streaming the body in chunks is what keeps peak memory at
+  roughly the size of the cloud; buffering the whole file first cost 2.83 GB and 2,407 ms.
+- [ ] Confirm against the real garden scene (`garden/point_cloud/iteration_30000/point_cloud.ply` from
+  the Inria pre-trained models) and check the statistics against what §7 predicts. (Run when the file
+  is available locally.)
 
 ## Check yourself
 
@@ -226,10 +295,17 @@ Print statistics once you can load it. Expect:
 
 ## My notes
 
-`GaussianCloud` is SoA (not `vector<Gaussian3D>`). The reader finds properties by name, activates
-`exp` / sigmoid / normalize, and remaps PLY `(w,x,y,z)` into `Quatf(x,y,z,w)`. `f_rest` is
-channel-major in the file and coefficient-major RGB in memory; the pattern test catches a missed
-transpose before Task 08. `writeGaussianPly` undoes activations for round-trips.
+`GaussianCloud` is SoA (not `vector<Gaussian3D>`), and it enforces that its columns stay the same
+length: mutable access is `std::span`, so only `resize()` and `setShDegree()` can change shape. The
+reader finds properties by **byte offset resolved from the name**, activates `exp` / sigmoid /
+normalize, and remaps PLY `(w,x,y,z)` into `Quatf(x,y,z,w)`. `f_rest` is channel-major in the file and
+coefficient-major RGB in memory; the pattern test catches a missed transpose before Task 08.
+`PlyWriter` undoes activations for round-trips and batches the body into chunk-sized writes (one
+`write` per few thousand vertices rather than one per float).
+
+Resolving offsets once per file and hoisting the cloud's spans out of the per-vertex loop matters more
+than it looks: the accessors are exported, so calling `cloud.sh()` inside the loop is a cross-library
+call that cannot inline. Together with chunked reads it took garden scale from 2,407 ms to 709 ms.
 
 Garden timing was not run here: the pretrained PLY is outside the repo. Use
 `example_03_ply_stats <path-to-point_cloud.ply>` when it is available.

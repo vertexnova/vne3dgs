@@ -13,13 +13,13 @@
 
 namespace vne::gs {
 
-math::Mat3f quatToRotationMatrix(const math::Quatf& rotation) noexcept {
+math::Mat3f Gaussian3D::rotationMatrixOf(const math::Quatf& rotation) noexcept {
     // toMatrix3 assumes a unit quaternion. normalized() returns identity at length 0.
     return rotation.normalized().toMatrix3();
 }
 
-math::Mat3f computeCovariance3D(const math::Vec3f& scale, const math::Quatf& rotation) noexcept {
-    const math::Mat3f rotation_matrix = quatToRotationMatrix(rotation);
+math::Mat3f Gaussian3D::covarianceOf(const math::Vec3f& scale, const math::Quatf& rotation) noexcept {
+    const math::Mat3f rotation_matrix = rotationMatrixOf(rotation);
 
     math::Mat3f scaling;
     scaling[0][0] = scale.x();
@@ -32,7 +32,7 @@ math::Mat3f computeCovariance3D(const math::Vec3f& scale, const math::Quatf& rot
     return rotated_scale * rotated_scale.transpose();
 }
 
-std::array<float, 6> packSymmetricCovariance(const math::Mat3f& matrix) noexcept {
+std::array<float, 6> Gaussian3D::packSymmetric(const math::Mat3f& matrix) noexcept {
     return {matrix[0][0], matrix[1][0], matrix[2][0], matrix[1][1], matrix[2][1], matrix[2][2]};
 }
 

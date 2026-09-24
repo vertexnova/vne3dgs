@@ -32,9 +32,12 @@ Executables are placed in `build/shared/bin/examples/` (or `build/static/bin/exa
 |---------|------|---------------|
 | `00_hello_gs` | [00](../docs/vertexnova/gs/tasks/00_scaffold.md) | Library links and runs; prints `vne::gs::getVersion()` |
 | `01_gaussians_2d` | [01](../docs/vertexnova/gs/tasks/01_gaussians_2d.md) | Five 2D Gaussians alpha-blended to `gaussians_2d.png` (and reversed order) |
+| `03_ply_stats` | [03](../docs/vertexnova/gs/tasks/03_ply_loader.md) | Load a PLY and print cloud stats |
+| `04_point_cloud` | [04](../docs/vertexnova/gs/tasks/04_camera_and_points.md) | Orbit camera; Gaussian centers as `points.png` |
 
 **Run:** `./build/<lib_type>/bin/examples/example_00_hello_gs`
 
 ```bash
 ./build/<lib_type>/bin/examples/example_01_gaussians_2d [output_dir]
+./build/<lib_type>/bin/examples/example_04_point_cloud [file.ply] [--up +y|-y|+z] [--az deg] [--el deg]
 ```

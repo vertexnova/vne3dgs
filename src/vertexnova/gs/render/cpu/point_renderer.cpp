@@ -1,0 +1,66 @@
+/* ---------------------------------------------------------------------
+ * Copyright (c) 2026 Ajeet Singh Yadav. All rights reserved.
+ * Licensed under the Apache License, Version 2.0 (the "License")
+ *
+ * Author:    Ajeet Singh Yadav
+ * Created:   September 2026
+ *
+ * Autodoc:   yes
+ * ----------------------------------------------------------------------
+ */
+
+#include "vertexnova/gs/render/cpu/point_renderer.h"
+
+#include <cmath>
+#include <limits>
+#include <vector>
+
+namespace vne::gs {
+
+ImageRGBf renderPoints(const GaussianCloud& cloud, const Camera& camera, const math::Vec3f& background) {
+    const Intrinsics& intrinsics = camera.intrinsics();
+    if (!intrinsics.isValid()) {
+        return {};
+    }
+
+    ImageRGBf image(intrinsics.width(), intrinsics.height(), background);
+
+    const std::size_t pixel_count = image.pixelCount();
+    std::vector<float> depth(pixel_count, std::numeric_limits<float>::infinity());
+
+    const std::span<const math::Vec3f> positions = cloud.positions();
+    const std::size_t width = static_cast<std::size_t>(image.width());
+    const float width_f = static_cast<float>(image.width());
+    const float height_f = static_cast<float>(image.height());
+
+    for (std::size_t i = 0; i < positions.size(); ++i) {
+        // One transform per Gaussian: project() hands back the depth the
+        // z-buffer needs instead of making us re-apply the extrinsics.
+        const std::optional<ProjectedPoint> projected = camera.project(positions[i]);
+        if (!projected.has_value()) {
+            continue;
+        }
+
+        // Round to the nearest pixel center. Compare as floats first: a huge
+        // coordinate from a near-plane-grazing point would overflow the cast.
+        const float px = std::floor(projected->pixel.x());
+        const float py = std::floor(projected->pixel.y());
+        if (!(px >= 0.0f && px < width_f && py >= 0.0f && py < height_f)) {
+            continue;
+        }
+
+        const std::size_t x = static_cast<std::size_t>(px);
+        const std::size_t y = static_cast<std::size_t>(py);
+        const std::size_t index = y * width + x;
+        if (!(projected->depth < depth[index])) {
+            continue;
+        }
+
+        depth[index] = projected->depth;
+        image.setPixel(static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y), cloud.dcColor(i));
+    }
+
+    return image;
+}
+
+}  // namespace vne::gs
