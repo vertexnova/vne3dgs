@@ -11,13 +11,17 @@
 
 #include "vertexnova/gs/render/cpu/point_renderer.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <vector>
 
 namespace vne::gs {
 
-ImageRGBf renderPoints(const GaussianCloud& cloud, const Camera& camera, const math::Vec3f& background) {
+ImageRGBf renderPoints(const GaussianCloud& cloud,
+                       const Camera& camera,
+                       const math::Vec3f& background,
+                       std::uint32_t point_radius) {
     const Intrinsics& intrinsics = camera.intrinsics();
     if (!intrinsics.isValid()) {
         return {};
@@ -29,9 +33,9 @@ ImageRGBf renderPoints(const GaussianCloud& cloud, const Camera& camera, const m
     std::vector<float> depth(pixel_count, std::numeric_limits<float>::infinity());
 
     const std::span<const math::Vec3f> positions = cloud.positions();
-    const std::size_t width = static_cast<std::size_t>(image.width());
-    const float width_f = static_cast<float>(image.width());
-    const float height_f = static_cast<float>(image.height());
+    const int width = static_cast<int>(image.width());
+    const int height = static_cast<int>(image.height());
+    const int radius = static_cast<int>(point_radius);
 
     for (std::size_t i = 0; i < positions.size(); ++i) {
         // One transform per Gaussian: project() hands back the depth the
@@ -41,23 +45,37 @@ ImageRGBf renderPoints(const GaussianCloud& cloud, const Camera& camera, const m
             continue;
         }
 
-        // Round to the nearest pixel center. Compare as floats first: a huge
-        // coordinate from a near-plane-grazing point would overflow the cast.
+        // Round to the nearest pixel covering [i, i+1). Compare as floats first:
+        // a huge coordinate from a near-plane-grazing point would overflow int.
         const float px = std::floor(projected->pixel.x());
         const float py = std::floor(projected->pixel.y());
-        if (!(px >= 0.0f && px < width_f && py >= 0.0f && py < height_f)) {
+        if (!(px >= -static_cast<float>(radius) && px < static_cast<float>(width + radius) &&
+              py >= -static_cast<float>(radius) && py < static_cast<float>(height + radius))) {
             continue;
         }
 
-        const std::size_t x = static_cast<std::size_t>(px);
-        const std::size_t y = static_cast<std::size_t>(py);
-        const std::size_t index = y * width + x;
-        if (!(projected->depth < depth[index])) {
-            continue;
-        }
+        const int cx = static_cast<int>(px);
+        const int cy = static_cast<int>(py);
+        const math::Vec3f color = cloud.dcColor(i);
+        const float z = projected->depth;
 
-        depth[index] = projected->depth;
-        image.setPixel(static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y), cloud.dcColor(i));
+        const int x0 = std::max(0, cx - radius);
+        const int y0 = std::max(0, cy - radius);
+        const int x1 = std::min(width - 1, cx + radius);
+        const int y1 = std::min(height - 1, cy + radius);
+
+        for (int y = y0; y <= y1; ++y) {
+            for (int x = x0; x <= x1; ++x) {
+                const std::size_t index =
+                    static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
+                    static_cast<std::size_t>(x);
+                if (!(z < depth[index])) {
+                    continue;
+                }
+                depth[index] = z;
+                image.setPixel(static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y), color);
+            }
+        }
     }
 
     return image;

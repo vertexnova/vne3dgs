@@ -23,6 +23,8 @@
 
 #include "vertexnova/math/core/vec.h"
 
+#include <cstdint>
+
 namespace vne::gs {
 
 /**
@@ -30,15 +32,20 @@ namespace vne::gs {
  *        and color it with `dcColor`. Background fills uncovered pixels.
  *
  * @details This is the reference "point cloud" view that every later renderer
- * is compared against: no footprint, no blending, one dot per Gaussian. A
- * point lands in pixel `floor(u), floor(v)`, matching the half-pixel-center
- * convention in `camera/conventions.h`.
+ * is compared against: no footprint, no blending, one stamped disc per
+ * Gaussian. The projected center lands at `floor(u), floor(v)`, matching the
+ * half-pixel-center convention in `camera/conventions.h`.
+ *
+ * @param point_radius Half-width of the axis-aligned square stamp in pixels
+ *                     (0 = a single pixel). Use a few pixels so sparse fixtures
+ *                     like `three_gaussians.ply` are visible on large images.
  *
  * @return An image of the camera's resolution, or an empty image if the
  *         camera's intrinsics are not usable (`Intrinsics::isValid()`).
  */
 [[nodiscard]] VNE_GS_API ImageRGBf renderPoints(const GaussianCloud& cloud,
                                                 const Camera& camera,
-                                                const math::Vec3f& background);
+                                                const math::Vec3f& background,
+                                                std::uint32_t point_radius = 0);
 
 }  // namespace vne::gs

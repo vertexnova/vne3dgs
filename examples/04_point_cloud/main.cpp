@@ -93,7 +93,17 @@ namespace {
 void printUsage(const char* argv0) {
     VNE_LOG_INFO << "Usage: " << argv0
                  << " <file.ply> [--up +y|-y|+z|-z] [--az deg] [--el deg] [--radius r] "
-                    "[--width W] [--height H] [--out points.png]";
+                    "[--point-size N] [--width W] [--height H] [--out points.png]";
+}
+
+[[nodiscard]] std::size_t countVisible(const vne::gs::GaussianCloud& cloud, const vne::gs::Camera& cam) {
+    std::size_t n = 0;
+    for (const auto& p : cloud.positions()) {
+        if (cam.project(p).has_value()) {
+            ++n;
+        }
+    }
+    return n;
 }
 
 }  // namespace
@@ -106,6 +116,8 @@ int main(int argc, char** argv) {
     float az_deg = 0.0f;
     float el_deg = 15.0f;
     float radius = -1.0f;
+    // Default stamp > 0 so the tiny three_gaussians fixture is visible on 800x600.
+    std::uint32_t point_size = 4;
     std::uint32_t width = 800;
     std::uint32_t height = 600;
     std::string out_path = "points.png";
@@ -147,6 +159,12 @@ int main(int argc, char** argv) {
                 return 1;
             }
             radius = std::strtof(v, nullptr);
+        } else if (arg == "--point-size") {
+            const char* v = need("--point-size");
+            if (!v) {
+                return 1;
+            }
+            point_size = static_cast<std::uint32_t>(std::strtoul(v, nullptr, 10));
         } else if (arg == "--width") {
             const char* v = need("--width");
             if (!v) {
@@ -200,12 +218,16 @@ int main(int argc, char** argv) {
     const vne::gs::Camera cam =
         vne::gs::Camera::orbit(center, radius, vne::math::degToRad(az_deg), vne::math::degToRad(el_deg), up, K);
 
-    VNE_LOG_INFO << "gaussians: " << cloud.size();
+    const std::size_t visible = countVisible(cloud, cam);
+    VNE_LOG_INFO << "gaussians: " << cloud.size() << " visible: " << visible;
     VNE_LOG_INFO << "center: (" << center.x() << ", " << center.y() << ", " << center.z() << ")";
     VNE_LOG_INFO << "eye: (" << cam.position().x() << ", " << cam.position().y() << ", " << cam.position().z() << ")";
-    VNE_LOG_INFO << "radius: " << radius << " az_deg: " << az_deg << " el_deg: " << el_deg;
+    VNE_LOG_INFO << "radius: " << radius << " az_deg: " << az_deg << " el_deg: " << el_deg
+                 << " point_size: " << point_size;
 
-    const vne::gs::ImageRGBf image = vne::gs::renderPoints(cloud, cam, vne::math::Vec3f(0.0f, 0.0f, 0.0f));
+    // Dark gray background makes sparse stamps easier to spot than pure black.
+    const vne::gs::ImageRGBf image =
+        vne::gs::renderPoints(cloud, cam, vne::math::Vec3f(0.08f, 0.08f, 0.10f), point_size);
     const std::vector<std::uint8_t> rgba = vne::gs::image_utils::toRGBA8(image);
     if (!vne::image::image_utils::saveImage(out_path,
                                             rgba.data(),
