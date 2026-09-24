@@ -12,6 +12,7 @@
 #include "vertexnova/gs/camera/camera.h"
 #include "vertexnova/gs/camera/conventions.h"
 
+#include "vertexnova/math/core/constants.h"
 #include "vertexnova/math/core/types.h"
 
 #include <cmath>
@@ -171,6 +172,8 @@ TEST(Camera, IntrinsicsValidity) {
     EXPECT_FALSE((vne::gs::Intrinsics{50.0f, 50.0f, 100.0f, 50.0f, 0, 100}.isValid()));
     EXPECT_FALSE(vne::gs::Intrinsics::fromFovY(0.0f, 200, 100).isValid());
     EXPECT_FALSE(vne::gs::Intrinsics::fromFovY(-1.0f, 200, 100).isValid());
+    EXPECT_FALSE(vne::gs::Intrinsics::fromFovY(vne::math::kPi, 200, 100).isValid());
+    EXPECT_FALSE(vne::gs::Intrinsics::fromFovY(vne::math::kPi + 0.1f, 200, 100).isValid());
 }
 
 TEST(Camera, IntrinsicsFovYRoundTrips) {

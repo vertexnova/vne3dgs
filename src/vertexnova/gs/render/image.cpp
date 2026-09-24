@@ -12,13 +12,17 @@
 #include "vertexnova/gs/render/image.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace vne::gs {
 
 namespace {
 
-/** @brief Clamps to [0, 1] and quantizes to 8 bits, rounding half up. */
+/** @brief Clamps to [0, 1] and quantizes to 8 bits, rounding half up. NaN → 0. */
 [[nodiscard]] std::uint8_t quantize(float value) noexcept {
+    if (std::isnan(value)) {
+        return 0;
+    }
     return static_cast<std::uint8_t>(std::clamp(value, 0.0f, 1.0f) * 255.0f + 0.5f);
 }
 
@@ -50,9 +54,12 @@ bool ImageRGBf::isEmpty() const noexcept {
 }
 
 void ImageRGBf::resize(std::uint32_t width, std::uint32_t height) {
+    // Allocate the replacement first so a failed allocation leaves this image
+    // at its previous size and buffer.
+    std::vector<float> next(static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * kChannels, 0.0f);
+    rgb_.swap(next);
     width_ = width;
     height_ = height;
-    rgb_.assign(pixelCount() * kChannels, 0.0f);
 }
 
 void ImageRGBf::fill(const math::Vec3f& color) noexcept {

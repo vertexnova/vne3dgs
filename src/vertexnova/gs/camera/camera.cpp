@@ -11,6 +11,8 @@
 
 #include "vertexnova/gs/camera/camera.h"
 
+#include "vertexnova/math/core/constants.h"
+
 #include <cmath>
 
 namespace vne::gs {
@@ -41,9 +43,12 @@ Intrinsics Intrinsics::fromFovY(float fovy_rad, std::uint32_t width, std::uint32
     Intrinsics k;
     k.setResolution(width, height);
     k.setPrincipalPoint(0.5f * static_cast<float>(width), 0.5f * static_cast<float>(height));
+    // Strictly (0, π): zero/negative and ≥π make tan(fovy/2) non-positive or undefined.
+    if (!(fovy_rad > 0.0f && fovy_rad < math::kPi)) {
+        k.setFocalLength(0.0f, 0.0f);
+        return k;
+    }
     const float tan_half = std::tan(0.5f * fovy_rad);
-    // A non-positive tangent means the field of view is degenerate or reflex;
-    // leave the focal lengths at 0 so isValid() reports the camera as unusable.
     const float fy = (tan_half > kEps) ? (static_cast<float>(height) / (2.0f * tan_half)) : 0.0f;
     k.setFocalLength(fy, fy);
     return k;

@@ -12,6 +12,7 @@
 #include "vertexnova/gs/render/image.h"
 
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -89,6 +90,19 @@ TEST(ImageUtils, ToRGBA8ClampsAndQuantizes) {
     EXPECT_EQ(rgba[5], 255u);
     EXPECT_EQ(rgba[6], 64u);
     EXPECT_EQ(rgba[7], 255u);
+}
+
+TEST(ImageUtils, ToRGBA8MapsNaNToZero) {
+    vne::gs::ImageRGBf image(1, 1);
+    image.setPixel(0, 0, vne::math::Vec3f(std::numeric_limits<float>::quiet_NaN(), 0.5f, 1.0f));
+
+    const std::vector<std::uint8_t> rgba = vne::gs::image_utils::toRGBA8(image);
+
+    ASSERT_EQ(rgba.size(), 4u);
+    EXPECT_EQ(rgba[0], 0u);
+    EXPECT_EQ(rgba[1], 128u);
+    EXPECT_EQ(rgba[2], 255u);
+    EXPECT_EQ(rgba[3], 255u);
 }
 
 TEST(ImageUtils, ToRGB8HasNoAlphaChannel) {

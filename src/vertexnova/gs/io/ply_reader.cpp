@@ -297,10 +297,17 @@ bool PlyReader::read(const std::string& path, GaussianCloud& out_cloud) {
         return fail("failed to measure PLY file");
     }
     const std::size_t available = static_cast<std::size_t>(file_end - body_start);
+    // Reject oversized preceding elements before budgeting vertices or seeking:
+    // with declared == 0, needed is 0 and would otherwise pass a short file.
+    if (skip_bytes > available) {
+        return fail("truncated PLY body: preceding elements need " + std::to_string(skip_bytes) + " bytes, file has "
+                    + std::to_string(available));
+    }
+    const std::size_t vertex_budget = available - skip_bytes;
     const std::size_t needed = declared * stride;
-    if (needed > available - std::min(available, skip_bytes)) {
+    if (needed > vertex_budget) {
         return fail("truncated PLY body: header declares " + std::to_string(needed) + " bytes of vertex data, file has "
-                    + std::to_string(available - std::min(available, skip_bytes)));
+                    + std::to_string(vertex_budget));
     }
     in.seekg(body_start + static_cast<std::streamoff>(skip_bytes));
     if (!in) {

@@ -22,6 +22,7 @@
 #include "config.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -29,6 +30,8 @@
 #include <vector>
 
 namespace {
+
+constexpr std::uint32_t kMaxImageDim = 16384u;
 
 [[nodiscard]] std::filesystem::path defaultPlyPath() {
     return std::filesystem::path(VNE_ROOT_DIR) / "testdata" / "three_gaussians.ply";
@@ -52,6 +55,22 @@ namespace {
         return true;
     }
     return false;
+}
+
+/** @brief Parses a strictly positive decimal u32 with no trailing junk. */
+[[nodiscard]] bool parsePositiveU32(const char* text, std::uint32_t& out, std::uint32_t max_inclusive) {
+    if (text == nullptr || *text == '\0' || *text == '-' || *text == '+') {
+        return false;
+    }
+    errno = 0;
+    char* end = nullptr;
+    const unsigned long value = std::strtoul(text, &end, 10);
+    if (end == text || *end != '\0' || errno == ERANGE || value == 0ul
+        || value > static_cast<unsigned long>(max_inclusive)) {
+        return false;
+    }
+    out = static_cast<std::uint32_t>(value);
+    return true;
 }
 
 [[nodiscard]] vne::math::Vec3f medianPosition(const vne::gs::GaussianCloud& cloud) {
@@ -161,22 +180,27 @@ int main(int argc, char** argv) {
             radius = std::strtof(v, nullptr);
         } else if (arg == "--point-size") {
             const char* v = need("--point-size");
-            if (!v) {
-                return 1;
+            if (!v || !parsePositiveU32(v, point_size, 1024u)) {
+                // Allow 0 via a dedicated path: "0" is rejected by parsePositiveU32.
+                if (v != nullptr && std::string(v) == "0") {
+                    point_size = 0;
+                } else {
+                    VNE_LOG_ERROR << "Invalid --point-size (use 0.." << 1024u << ")";
+                    return 1;
+                }
             }
-            point_size = static_cast<std::uint32_t>(std::strtoul(v, nullptr, 10));
         } else if (arg == "--width") {
             const char* v = need("--width");
-            if (!v) {
+            if (!v || !parsePositiveU32(v, width, kMaxImageDim)) {
+                VNE_LOG_ERROR << "Invalid --width (use 1.." << kMaxImageDim << ")";
                 return 1;
             }
-            width = static_cast<std::uint32_t>(std::strtoul(v, nullptr, 10));
         } else if (arg == "--height") {
             const char* v = need("--height");
-            if (!v) {
+            if (!v || !parsePositiveU32(v, height, kMaxImageDim)) {
+                VNE_LOG_ERROR << "Invalid --height (use 1.." << kMaxImageDim << ")";
                 return 1;
             }
-            height = static_cast<std::uint32_t>(std::strtoul(v, nullptr, 10));
         } else if (arg == "--out") {
             const char* v = need("--out");
             if (!v) {
@@ -215,6 +239,10 @@ int main(int argc, char** argv) {
     }
 
     const vne::gs::Intrinsics K = vne::gs::Intrinsics::fromFovY(vne::math::degToRad(60.0f), width, height);
+    if (!K.isValid()) {
+        VNE_LOG_ERROR << "Invalid camera intrinsics for " << width << "x" << height;
+        return 1;
+    }
     const vne::gs::Camera cam =
         vne::gs::Camera::orbit(center, radius, vne::math::degToRad(az_deg), vne::math::degToRad(el_deg), up, K);
 
