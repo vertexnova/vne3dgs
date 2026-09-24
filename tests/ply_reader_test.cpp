@@ -11,10 +11,13 @@
 
 #include "vertexnova/gs/core/gaussian_cloud.h"
 #include "vertexnova/gs/io/ply_reader.h"
+#include "vertexnova/gs/io/ply_writer.h"
 #include "config.h"
 
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
+#include <ostream>
 #include <fstream>
 #include <limits>
 #include <string>
@@ -49,24 +52,41 @@ void writeAsciiHeader(std::ostream& out, int vertex_count, int rest_count, bool 
 [[nodiscard]] vne::gs::GaussianCloud makeCloud(int degree, std::size_t count = 1) {
     vne::gs::GaussianCloud cloud;
     cloud.setShDegree(degree);
-    const int coeffs = vne::gs::shCoeffCount(degree);
-    cloud.positions().assign(count, vne::math::Vec3f(1.0f, 2.0f, 3.0f));
-    cloud.scales().assign(count, vne::math::Vec3f(2.0f, 1.0f, 0.5f));
-    cloud.rotations().assign(count, vne::math::Quatf::identity());
-    cloud.opacities().assign(count, 0.5f);
-    cloud.sh().assign(count * static_cast<std::size_t>(coeffs) * 3u, 0.0f);
+    cloud.resize(count);
+    const int coeffs = cloud.shCoeffCount();
     for (std::size_t i = 0; i < count; ++i) {
-        const std::size_t base = i * static_cast<std::size_t>(coeffs) * 3u;
-        cloud.sh()[base + 0] = 0.1f;
-        cloud.sh()[base + 1] = -0.2f;
-        cloud.sh()[base + 2] = 0.3f;
+        cloud.positions()[i] = vne::math::Vec3f(1.0f, 2.0f, 3.0f);
+        cloud.scales()[i] = vne::math::Vec3f(2.0f, 1.0f, 0.5f);
+        cloud.rotations()[i] = vne::math::Quatf::identity();
+        cloud.opacities()[i] = 0.5f;
+        cloud.setShCoefficient(i, 0, vne::math::Vec3f(0.1f, -0.2f, 0.3f));
         for (int k = 1; k < coeffs; ++k) {
-            cloud.sh()[base + static_cast<std::size_t>(k) * 3u + 0] = static_cast<float>(k);
-            cloud.sh()[base + static_cast<std::size_t>(k) * 3u + 1] = static_cast<float>(k + 10);
-            cloud.sh()[base + static_cast<std::size_t>(k) * 3u + 2] = static_cast<float>(k + 20);
+            cloud.setShCoefficient(
+                i,
+                k,
+                vne::math::Vec3f(static_cast<float>(k), static_cast<float>(k + 10), static_cast<float>(k + 20)));
         }
     }
     return cloud;
+}
+
+/** @brief Writes the 14 body floats of one minimal, finite Gaussian. */
+void writeOneVertex(std::ostream& out, float x = 1.0f) {
+    const float values[] = {x,
+                            2.0f,
+                            3.0f,  // position
+                            0.1f,
+                            0.2f,
+                            0.3f,  // f_dc
+                            0.0f,  // opacity -> 0.5
+                            0.0f,
+                            0.0f,
+                            0.0f,  // log scale -> 1
+                            1.0f,
+                            0.0f,
+                            0.0f,
+                            0.0f};
+    out.write(reinterpret_cast<const char*>(values), sizeof(values));
 }
 
 }  // namespace
@@ -188,7 +208,7 @@ TEST(PlyReader, RejectsNegativeVertexCount) {
     vne::gs::GaussianCloud cloud;
     std::string error;
     EXPECT_FALSE(vne::gs::readGaussianPly(path.string(), cloud, &error));
-    EXPECT_NE(error.find("vertex count"), std::string::npos);
+    EXPECT_NE(error.find("element count"), std::string::npos);
     std::filesystem::remove(path);
 }
 
@@ -206,22 +226,238 @@ TEST(PlyReader, RejectsTruncatedBody) {
     std::filesystem::remove(path);
 }
 
-TEST(PlyReader, RejectsNonFiniteFloat) {
+TEST(PlyReader, SkipsNonFiniteGaussiansByDefault) {
     const auto path = tempPlyPath("nan_body.ply");
+    {
+        std::ofstream out(path, std::ios::binary);
+        writeAsciiHeader(out, 3, 0);
+        writeOneVertex(out, 1.0f);
+        // Middle Gaussian has a NaN position; the other two are fine.
+        const float nan = std::numeric_limits<float>::quiet_NaN();
+        const float values[] = {nan, 2.0f, 3.0f, 0.1f, 0.2f, 0.3f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f};
+        out.write(reinterpret_cast<const char*>(values), sizeof(values));
+        writeOneVertex(out, 5.0f);
+    }
+
+    vne::gs::PlyReader reader;
+    vne::gs::GaussianCloud cloud;
+    ASSERT_TRUE(reader.read(path.string(), cloud)) << reader.error();
+
+    EXPECT_EQ(reader.stats().declared_vertex_count, 3u);
+    EXPECT_EQ(reader.stats().skipped_non_finite, 1u);
+    EXPECT_EQ(reader.stats().loaded_vertex_count, 2u);
+    ASSERT_EQ(cloud.size(), 2u);
+    EXPECT_TRUE(cloud.isConsistent());
+    // The survivors keep their order, with the bad one squeezed out.
+    EXPECT_FLOAT_EQ(cloud.positions()[0].x(), 1.0f);
+    EXPECT_FLOAT_EQ(cloud.positions()[1].x(), 5.0f);
+    std::filesystem::remove(path);
+}
+
+TEST(PlyReader, RejectsNonFiniteWhenPolicySaysSo) {
+    const auto path = tempPlyPath("nan_strict.ply");
     {
         std::ofstream out(path, std::ios::binary);
         writeAsciiHeader(out, 1, 0);
         const float nan = std::numeric_limits<float>::quiet_NaN();
-        const float zero = 0.0f;
-        const float one = 1.0f;
-        // x y z f_dc_0..2 opacity scale_0..2 rot_0..3  (14 floats)
-        const float values[] = {nan, zero, zero, zero, zero, zero, zero, zero, zero, zero, one, zero, zero, zero};
+        const float values[] = {nan, 2.0f, 3.0f, 0.1f, 0.2f, 0.3f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f};
         out.write(reinterpret_cast<const char*>(values), sizeof(values));
     }
+
+    vne::gs::PlyReadOptions options;
+    options.skip_non_finite = false;
+    vne::gs::PlyReader reader(options);
+    vne::gs::GaussianCloud cloud;
+
+    EXPECT_FALSE(reader.read(path.string(), cloud));
+    EXPECT_NE(reader.error().find("non-finite"), std::string::npos);
+    std::filesystem::remove(path);
+}
+
+TEST(PlyReader, LeavesTheDestinationUntouchedOnFailure) {
+    const auto path = tempPlyPath("truncated_keeps_dest.ply");
+    {
+        std::ofstream out(path, std::ios::binary);
+        writeAsciiHeader(out, 4, 0);
+        writeOneVertex(out);  // one vertex where the header promised four
+    }
+
+    // A cloud the caller already owns must survive a failed load intact.
+    vne::gs::GaussianCloud cloud = makeCloud(1, 2);
+    std::string error;
+    EXPECT_FALSE(vne::gs::readGaussianPly(path.string(), cloud, &error));
+    EXPECT_EQ(cloud.size(), 2u);
+    EXPECT_EQ(cloud.shDegree(), 1);
+    EXPECT_TRUE(cloud.isConsistent());
+    EXPECT_FLOAT_EQ(cloud.positions()[0].x(), 1.0f);
+    std::filesystem::remove(path);
+}
+
+TEST(PlyReader, SkipsElementsDeclaredBeforeVertex) {
+    // A camera element ahead of vertex shifts the body. Reading the vertex data
+    // from the wrong offset used to succeed and return the other element's bytes.
+    const auto path = tempPlyPath("preceding_element.ply");
+    {
+        std::ofstream out(path, std::ios::binary);
+        out << "ply\nformat binary_little_endian 1.0\n";
+        out << "element camera 1\nproperty float px\nproperty float py\nproperty float pz\n";
+        out << "element vertex 1\n";
+        out << "property float x\nproperty float y\nproperty float z\n";
+        out << "property float f_dc_0\nproperty float f_dc_1\nproperty float f_dc_2\n";
+        out << "property float opacity\n";
+        out << "property float scale_0\nproperty float scale_1\nproperty float scale_2\n";
+        out << "property float rot_0\nproperty float rot_1\nproperty float rot_2\nproperty float rot_3\n";
+        out << "end_header\n";
+        const float camera[] = {111.0f, 222.0f, 333.0f};
+        out.write(reinterpret_cast<const char*>(camera), sizeof(camera));
+        writeOneVertex(out, 1.0f);
+    }
+
+    vne::gs::GaussianCloud cloud;
+    std::string error;
+    ASSERT_TRUE(vne::gs::readGaussianPly(path.string(), cloud, &error)) << error;
+
+    ASSERT_EQ(cloud.size(), 1u);
+    EXPECT_FLOAT_EQ(cloud.positions()[0].x(), 1.0f);
+    EXPECT_FLOAT_EQ(cloud.positions()[0].y(), 2.0f);
+    EXPECT_FLOAT_EQ(cloud.positions()[0].z(), 3.0f);
+    std::filesystem::remove(path);
+}
+
+TEST(PlyReader, RejectsAListElementBeforeVertexRatherThanGuessing) {
+    const auto path = tempPlyPath("list_before_vertex.ply");
+    {
+        std::ofstream out(path, std::ios::binary);
+        out << "ply\nformat binary_little_endian 1.0\n";
+        out << "element face 2\nproperty list uchar int vertex_index\n";
+        out << "element vertex 1\n";
+        out << "property float x\nproperty float y\nproperty float z\n";
+        out << "property float f_dc_0\nproperty float f_dc_1\nproperty float f_dc_2\n";
+        out << "property float opacity\n";
+        out << "property float scale_0\nproperty float scale_1\nproperty float scale_2\n";
+        out << "property float rot_0\nproperty float rot_1\nproperty float rot_2\nproperty float rot_3\n";
+        out << "end_header\n";
+        writeOneVertex(out);
+    }
+
     vne::gs::GaussianCloud cloud;
     std::string error;
     EXPECT_FALSE(vne::gs::readGaussianPly(path.string(), cloud, &error));
-    EXPECT_NE(error.find("non-finite"), std::string::npos);
+    EXPECT_NE(error.find("list"), std::string::npos);
+    std::filesystem::remove(path);
+}
+
+TEST(PlyReader, IgnoresExtraPropertiesOfOtherTypes) {
+    // Some tools add their own columns. Finding properties by name and offset
+    // means those are skipped instead of shifting every value after them.
+    const auto path = tempPlyPath("extra_properties.ply");
+    {
+        std::ofstream out(path, std::ios::binary);
+        out << "ply\nformat binary_little_endian 1.0\nelement vertex 1\n";
+        out << "property uchar red\n";
+        out << "property float x\nproperty float y\nproperty float z\n";
+        out << "property double confidence\n";
+        out << "property float f_dc_0\nproperty float f_dc_1\nproperty float f_dc_2\n";
+        out << "property float opacity\n";
+        out << "property float scale_0\nproperty float scale_1\nproperty float scale_2\n";
+        out << "property float rot_0\nproperty float rot_1\nproperty float rot_2\nproperty float rot_3\n";
+        out << "property int cluster\n";
+        out << "end_header\n";
+        const std::uint8_t red = 200u;
+        out.write(reinterpret_cast<const char*>(&red), 1);
+        const float position[] = {1.0f, 2.0f, 3.0f};
+        out.write(reinterpret_cast<const char*>(position), sizeof(position));
+        const double confidence = 0.75;
+        out.write(reinterpret_cast<const char*>(&confidence), sizeof(confidence));
+        const float rest[] = {0.1f, 0.2f, 0.3f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f};
+        out.write(reinterpret_cast<const char*>(rest), sizeof(rest));
+        const std::int32_t cluster = 7;
+        out.write(reinterpret_cast<const char*>(&cluster), sizeof(cluster));
+    }
+
+    vne::gs::GaussianCloud cloud;
+    std::string error;
+    ASSERT_TRUE(vne::gs::readGaussianPly(path.string(), cloud, &error)) << error;
+
+    ASSERT_EQ(cloud.size(), 1u);
+    EXPECT_FLOAT_EQ(cloud.positions()[0].x(), 1.0f);
+    EXPECT_FLOAT_EQ(cloud.positions()[0].z(), 3.0f);
+    EXPECT_NEAR(cloud.opacities()[0], 0.5f, 1e-5f);
+    EXPECT_NEAR(cloud.scales()[0].x(), 1.0f, 1e-5f);
+    std::filesystem::remove(path);
+}
+
+TEST(PlyReader, RejectsAHeaderThatOverstatesTheVertexCount) {
+    // The count sizes an allocation, so it must be checked against the file.
+    const auto path = tempPlyPath("huge_count.ply");
+    {
+        std::ofstream out(path, std::ios::binary);
+        writeAsciiHeader(out, 100000000, 0);
+        writeOneVertex(out);
+    }
+
+    vne::gs::GaussianCloud cloud;
+    std::string error;
+    EXPECT_FALSE(vne::gs::readGaussianPly(path.string(), cloud, &error));
+    EXPECT_NE(error.find("truncated"), std::string::npos);
+    std::filesystem::remove(path);
+}
+
+TEST(PlyReader, ReadsAcrossChunkBoundaries) {
+    // A chunk size below one vertex record must still make progress, and the
+    // result must match a single-chunk read exactly.
+    const auto path = tempPlyPath("chunked.ply");
+    const vne::gs::GaussianCloud original = makeCloud(3, 37);
+    std::string error;
+    ASSERT_TRUE(vne::gs::writeGaussianPly(path.string(), original, &error)) << error;
+
+    vne::gs::PlyReadOptions tiny;
+    tiny.chunk_bytes = 1;
+    vne::gs::PlyReader tiny_reader(tiny);
+    vne::gs::GaussianCloud chunked;
+    ASSERT_TRUE(tiny_reader.read(path.string(), chunked)) << tiny_reader.error();
+
+    vne::gs::GaussianCloud whole;
+    ASSERT_TRUE(vne::gs::readGaussianPly(path.string(), whole, &error)) << error;
+
+    ASSERT_EQ(chunked.size(), 37u);
+    ASSERT_EQ(chunked.sh().size(), whole.sh().size());
+    for (std::size_t i = 0; i < chunked.size(); ++i) {
+        EXPECT_FLOAT_EQ(chunked.positions()[i].x(), whole.positions()[i].x());
+        EXPECT_FLOAT_EQ(chunked.opacities()[i], whole.opacities()[i]);
+    }
+    for (std::size_t i = 0; i < chunked.sh().size(); ++i) {
+        EXPECT_FLOAT_EQ(chunked.sh()[i], whole.sh()[i]);
+    }
+    std::filesystem::remove(path);
+}
+
+TEST(PlyWriter, RejectsAnInconsistentCloud) {
+    // The cloud class prevents desync, so a consistent cloud always writes.
+    const vne::gs::GaussianCloud cloud = makeCloud(2, 3);
+    ASSERT_TRUE(cloud.isConsistent());
+
+    const auto path = tempPlyPath("writer_consistent.ply");
+    vne::gs::PlyWriter writer;
+    EXPECT_TRUE(writer.write(path.string(), cloud)) << writer.error();
+    EXPECT_TRUE(writer.error().empty());
+    std::filesystem::remove(path);
+}
+
+TEST(PlyWriter, CanOmitNormals) {
+    vne::gs::PlyWriteOptions options;
+    options.write_normals = false;
+    vne::gs::PlyWriter writer(options);
+
+    const auto path = tempPlyPath("no_normals.ply");
+    const vne::gs::GaussianCloud original = makeCloud(1, 2);
+    ASSERT_TRUE(writer.write(path.string(), original)) << writer.error();
+
+    vne::gs::GaussianCloud loaded;
+    std::string error;
+    ASSERT_TRUE(vne::gs::readGaussianPly(path.string(), loaded, &error)) << error;
+    EXPECT_EQ(loaded.size(), 2u);
+    EXPECT_NEAR(loaded.positions()[0].x(), original.positions()[0].x(), 1e-6f);
     std::filesystem::remove(path);
 }
 

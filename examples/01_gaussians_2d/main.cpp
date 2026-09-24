@@ -14,6 +14,7 @@
 #include "vertexnova/gs/core/conic.h"
 #include "vertexnova/gs/core/front_to_back_blender.h"
 #include "vertexnova/gs/core/gaussian2d.h"
+#include "vertexnova/gs/render/image.h"
 #include "vertexnova/io/image/image.h"
 
 #include <algorithm>
@@ -43,27 +44,27 @@ constexpr float kPixelCenterOffset = 0.5f;
 }
 
 void splatInto(std::vector<vne::gs::FrontToBackBlender>& pixels, const vne::gs::Gaussian2D& gaussian) {
-    const std::optional<vne::gs::Conic> conic = vne::gs::computeConic(gaussian.cov);
+    // Invert the covariance once per splat, then evaluate over its footprint.
+    const std::optional<vne::gs::Conic> conic = gaussian.conic();
     if (!conic.has_value()) {
         return;
     }
-    const int radius = vne::gs::computeRadius(gaussian.cov);
-    const int x0 = std::max(0, static_cast<int>(std::floor(gaussian.mean.x() - static_cast<float>(radius))));
-    const int y0 = std::max(0, static_cast<int>(std::floor(gaussian.mean.y() - static_cast<float>(radius))));
-    const int x1 = std::min(kWidth, static_cast<int>(std::ceil(gaussian.mean.x() + static_cast<float>(radius))));
-    const int y1 = std::min(kHeight, static_cast<int>(std::ceil(gaussian.mean.y() + static_cast<float>(radius))));
+    const float radius = static_cast<float>(gaussian.radius());
+    const int x0 = std::max(0, static_cast<int>(std::floor(gaussian.mean().x() - radius)));
+    const int y0 = std::max(0, static_cast<int>(std::floor(gaussian.mean().y() - radius)));
+    const int x1 = std::min(kWidth, static_cast<int>(std::ceil(gaussian.mean().x() + radius)));
+    const int y1 = std::min(kHeight, static_cast<int>(std::ceil(gaussian.mean().y() + radius)));
 
     for (int y = y0; y < y1; ++y) {
         for (int x = x0; x < x1; ++x) {
             const vne::math::Vec2f pixel(static_cast<float>(x) + kPixelCenterOffset,
                                          static_cast<float>(y) + kPixelCenterOffset);
-            const float power = vne::gs::computePower(*conic, pixel - gaussian.mean);
-            const float alpha = vne::gs::computeAlpha(gaussian.opacity, power);
+            const float alpha = gaussian.alphaAt(*conic, pixel);
             if (alpha <= 0.0f) {
                 continue;
             }
             pixels[static_cast<std::size_t>(y) * static_cast<std::size_t>(kWidth) + static_cast<std::size_t>(x)]
-                .composite(gaussian.color, alpha);
+                .composite(gaussian.color(), alpha);
         }
     }
 }
@@ -74,18 +75,15 @@ void splatInto(std::vector<vne::gs::FrontToBackBlender>& pixels, const vne::gs::
         splatInto(pixels, splat);
     }
 
-    std::vector<std::uint8_t> rgb(static_cast<std::size_t>(kWidth * kHeight * kChannels));
     const vne::math::Vec3f background(0.0f, 0.0f, 0.0f);
-    for (int i = 0; i < kWidth * kHeight; ++i) {
-        const vne::math::Vec3f radiance = pixels[static_cast<std::size_t>(i)].resolve(background);
-        rgb[static_cast<std::size_t>(i) * 3 + 0] =
-            static_cast<std::uint8_t>(std::clamp(radiance.x(), 0.0f, 1.0f) * 255.0f + 0.5f);
-        rgb[static_cast<std::size_t>(i) * 3 + 1] =
-            static_cast<std::uint8_t>(std::clamp(radiance.y(), 0.0f, 1.0f) * 255.0f + 0.5f);
-        rgb[static_cast<std::size_t>(i) * 3 + 2] =
-            static_cast<std::uint8_t>(std::clamp(radiance.z(), 0.0f, 1.0f) * 255.0f + 0.5f);
+    vne::gs::ImageRGBf image(static_cast<std::uint32_t>(kWidth), static_cast<std::uint32_t>(kHeight));
+    for (std::uint32_t y = 0; y < image.height(); ++y) {
+        for (std::uint32_t x = 0; x < image.width(); ++x) {
+            const std::size_t index = static_cast<std::size_t>(y) * static_cast<std::size_t>(kWidth) + x;
+            image.setPixel(x, y, pixels[index].resolve(background));
+        }
     }
-    return rgb;
+    return vne::gs::image_utils::toRGB8(image);
 }
 
 bool writePng(const std::string& path, const std::vector<std::uint8_t>& rgb) {

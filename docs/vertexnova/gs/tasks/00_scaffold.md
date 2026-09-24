@@ -51,6 +51,15 @@ vne3dgs/
 
 - Headers: `include/vertexnova/gs/<module>/<name>.h`, sources mirror them under `src/`.
 - Add both to `src/CMakeLists.txt` (`SOURCE_FILES`, `HEADER_FILES`) and include the header from `gs.h`.
+- **Exception — header-only hot math.** `core/conic.h`, `core/gaussian2d.h` and
+  `core/front_to_back_blender.h` have no `.cpp`. Their functions run once per covered pixel per splat,
+  and an exported out-of-line definition means a cross-library call that cannot inline, in the
+  innermost loop of Tasks 06, 07 and 13. Keep a value type header-only when it is called per pixel;
+  keep a `.cpp` when it is called per frame or per splat.
+- **Private headers** live under `src/` (e.g. `src/vertexnova/gs/io/ply_format.h`), go in
+  `PRIVATE_HEADER_FILES`, and are not installed. `VNE_SRC_DIR` is on the include path, so they are
+  included by the same `vertexnova/gs/...` spelling. Note `source_group(TREE ${VNE_INCLUDE_DIR} ...)`
+  fails if a file outside that tree lands in `HEADER_FILES`.
 - Tests: `tests/<module>_test.cpp`, added to `TEST_SOURCES` in `tests/CMakeLists.txt`.
 - Examples: `examples/NN_<name>/` with its own `CMakeLists.txt`, added in `examples/CMakeLists.txt`.
 - Style: [CODING_GUIDELINES.md](../../../../CODING_GUIDELINES.md): camelCase functions, snake_case
@@ -98,6 +107,8 @@ vne3dgs/
 
 1. `include/vertexnova/gs/io/ply_reader.h` + `src/vertexnova/gs/io/ply_reader.cpp`; add both to
    `src/CMakeLists.txt`, include from `gs.h`, and add `tests/ply_reader_test.cpp` to `tests/CMakeLists.txt`.
+   (In the end it became two public headers, `ply_reader.h` and `ply_writer.h`, over a private
+   `src/.../io/ply_format.h`: one class per header, per the coding guidelines.)
 2. `./scripts/build_macos.sh -l static -t Debug -a test`, or `cmake -B build/static -DVNE_GS_LIB_TYPE=static`.
 3. A static library built without PIC can't be linked into a shared library on Linux. On iOS, shared
    intermediate libraries each need code signing.

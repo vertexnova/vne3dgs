@@ -11,44 +11,30 @@
 
 #include "vertexnova/gs/io/ply_reader.h"
 
+#include "vertexnova/gs/io/ply_format.h"
 #include "vertexnova/logging/logging.h"
 
 #include <algorithm>
-#include <bit>
-#include <cctype>
+#include <array>
 #include <charconv>
 #include <cmath>
 #include <cstdint>
-#include <cstring>
 #include <fstream>
 #include <limits>
-#include <sstream>
+#include <span>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace {
 
 CREATE_VNE_LOGGER_CATEGORY("vne.gs.ply")
 
-constexpr float kLogitEps = 1e-6f;
+using vne::gs::detail::PlyElement;
+using vne::gs::detail::PlyHeader;
+using vne::gs::detail::PlyProperty;
+using vne::gs::detail::PlyType;
 
-void reportError(std::string* error, const std::string& message) {
-    VNE_LOG_ERROR << message;
-    if (error != nullptr) {
-        *error = message;
-    }
-}
-
-[[nodiscard]] float sigmoid(float value) noexcept {
-    return 1.0f / (1.0f + std::exp(-value));
-}
-
-[[nodiscard]] float logit(float opacity) noexcept {
-    const float clamped = std::clamp(opacity, kLogitEps, 1.0f - kLogitEps);
-    return std::log(clamped / (1.0f - clamped));
-}
-
+/** @brief Number of `f_rest` properties each supported SH degree implies. */
 [[nodiscard]] int degreeFromRestCount(int rest_count) noexcept {
     switch (rest_count) {
         case 0:
@@ -64,279 +50,164 @@ void reportError(std::string* error, const std::string& message) {
     }
 }
 
-[[nodiscard]] float readFloatLE(const std::uint8_t* bytes) noexcept {
-    std::uint8_t ordered[sizeof(float)];
-    if constexpr (std::endian::native == std::endian::little) {
-        std::memcpy(ordered, bytes, sizeof(float));
-    } else {
-        ordered[0] = bytes[3];
-        ordered[1] = bytes[2];
-        ordered[2] = bytes[1];
-        ordered[3] = bytes[0];
-    }
-    float value = 0.0f;
-    std::memcpy(&value, ordered, sizeof(float));
-    return value;
+[[nodiscard]] float sigmoid(float value) noexcept {
+    return 1.0f / (1.0f + std::exp(-value));
 }
 
-void writeFloatLE(std::ostream& out, float value) {
-    std::uint8_t host[sizeof(float)];
-    std::memcpy(host, &value, sizeof(float));
-    std::uint8_t ordered[sizeof(float)];
-    if constexpr (std::endian::native == std::endian::little) {
-        std::memcpy(ordered, host, sizeof(float));
-    } else {
-        ordered[0] = host[3];
-        ordered[1] = host[2];
-        ordered[2] = host[1];
-        ordered[3] = host[0];
-    }
-    out.write(reinterpret_cast<const char*>(ordered), sizeof(float));
-}
-
-[[nodiscard]] bool readFiniteFloatLE(
-    const std::uint8_t* bytes, float& out_value, std::size_t vertex, const char* property, std::string* error) {
-    out_value = readFloatLE(bytes);
-    if (!std::isfinite(out_value)) {
-        reportError(error,
-                    std::string("non-finite float for property ") + property + " at vertex " + std::to_string(vertex));
-        return false;
-    }
-    return true;
-}
-
-struct PlyHeader {
-    std::size_t vertex_count = 0;
-    std::vector<std::string> property_names;
-    bool binary_little_endian = false;
+/**
+ * @brief Byte offsets of the Gaussian properties inside one vertex record.
+ *
+ * Resolved once per file; the per-vertex loop then does pointer arithmetic
+ * only. `rest` is in file order (`f_rest_0`, `f_rest_1`, ...), which is
+ * channel-major.
+ */
+struct VertexLayout {
+    std::size_t x = 0;
+    std::size_t y = 0;
+    std::size_t z = 0;
+    std::size_t scale[3] = {0, 0, 0};
+    std::size_t rot[4] = {0, 0, 0, 0};
+    std::size_t opacity = 0;
+    std::size_t dc[3] = {0, 0, 0};
+    std::vector<std::size_t> rest;
+    int sh_degree = 0;
 };
 
-[[nodiscard]] bool parseVertexCount(const std::string& text, std::size_t& count, std::string* error) {
-    if (text.empty() || text[0] == '-') {
-        reportError(error, "invalid vertex count: " + text);
+/**
+ * @brief Looks up a required float property and records its offset.
+ *
+ * Gaussian parameters must be `float`; a file that stores them at another
+ * width is not a 3DGS scene, and silently converting would hide that.
+ */
+[[nodiscard]] bool requireFloatProperty(const PlyElement& element,
+                                        const std::string& name,
+                                        std::size_t& out_offset,
+                                        std::string& out_error) {
+    const PlyProperty* property = element.find(name);
+    if (property == nullptr) {
+        out_error = "missing property: " + name;
         return false;
     }
-    std::uint64_t parsed = 0;
-    const auto* begin = text.data();
-    const auto* end = begin + text.size();
-    const auto [ptr, ec] = std::from_chars(begin, end, parsed);
-    if (ec != std::errc{} || ptr != end) {
-        reportError(error, "invalid vertex count: " + text);
+    if (property->type != PlyType::eFloat32) {
+        out_error = "property " + name + " must be float32";
         return false;
     }
-    if (parsed > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
-        reportError(error, "vertex count exceeds size_t range: " + text);
-        return false;
-    }
-    count = static_cast<std::size_t>(parsed);
+    out_offset = property->offset;
     return true;
 }
 
-[[nodiscard]] bool parseHeader(std::istream& in, PlyHeader& header, std::string* error) {
-    std::string line;
-    if (!std::getline(in, line)) {
-        reportError(error, "empty PLY file");
-        return false;
+/** @brief Counts contiguous `f_rest_N` properties starting at 0. */
+[[nodiscard]] int countRestProperties(const PlyElement& element) noexcept {
+    int count = 0;
+    while (element.find("f_rest_" + std::to_string(count)) != nullptr) {
+        ++count;
     }
-    if (!line.empty() && line.back() == '\r') {
-        line.pop_back();
-    }
-    if (line != "ply") {
-        reportError(error, "missing ply magic");
-        return false;
-    }
-
-    bool in_vertex = false;
-    while (std::getline(in, line)) {
-        if (!line.empty() && line.back() == '\r') {
-            line.pop_back();
-        }
-        if (line.empty()) {
-            continue;
-        }
-
-        std::istringstream tokens(line);
-        std::string keyword;
-        tokens >> keyword;
-
-        if (keyword == "comment" || keyword == "obj_info") {
-            continue;
-        }
-        if (keyword == "format") {
-            std::string format;
-            std::string version;
-            tokens >> format >> version;
-            if (format == "ascii") {
-                reportError(error, "ASCII PLY is not supported; expected binary_little_endian");
-                return false;
-            }
-            if (format == "binary_big_endian") {
-                reportError(error, "big-endian PLY is not supported; expected binary_little_endian");
-                return false;
-            }
-            if (format != "binary_little_endian") {
-                reportError(error, "unsupported PLY format: " + format);
-                return false;
-            }
-            header.binary_little_endian = true;
-            continue;
-        }
-        if (keyword == "element") {
-            std::string name;
-            std::string count_text;
-            tokens >> name >> count_text;
-            in_vertex = (name == "vertex");
-            if (in_vertex) {
-                if (!parseVertexCount(count_text, header.vertex_count, error)) {
-                    return false;
-                }
-                header.property_names.clear();
-            }
-            continue;
-        }
-        if (keyword == "property") {
-            if (!in_vertex) {
-                continue;
-            }
-            std::string type;
-            std::string name;
-            tokens >> type >> name;
-            if (type == "list") {
-                reportError(error, "list properties are not supported in Gaussian PLY");
-                return false;
-            }
-            if (type != "float" && type != "float32") {
-                reportError(error, "unsupported property type: " + type + " for " + name);
-                return false;
-            }
-            header.property_names.push_back(name);
-            continue;
-        }
-        if (keyword == "end_header") {
-            if (!header.binary_little_endian) {
-                reportError(error, "missing binary_little_endian format");
-                return false;
-            }
-            return true;
-        }
-    }
-
-    reportError(error, "missing end_header");
-    return false;
+    return count;
 }
 
-[[nodiscard]] bool resolvePropertyMap(const std::vector<std::string>& names,
-                                      std::unordered_map<std::string, int>& index_of,
-                                      int& rest_count,
-                                      int& degree,
-                                      std::string* error) {
-    index_of.clear();
-    for (int i = 0; i < static_cast<int>(names.size()); ++i) {
-        if (index_of.contains(names[static_cast<std::size_t>(i)])) {
-            reportError(error, "duplicate property: " + names[static_cast<std::size_t>(i)]);
-            return false;
-        }
-        index_of.emplace(names[static_cast<std::size_t>(i)], i);
-    }
-
-    const auto require = [&](const char* name) -> bool {
-        if (!index_of.contains(name)) {
-            reportError(error, std::string("missing property: ") + name);
-            return false;
-        }
-        return true;
-    };
-
-    if (!require("x") || !require("y") || !require("z") || !require("opacity") || !require("scale_0")
-        || !require("scale_1") || !require("scale_2") || !require("rot_0") || !require("rot_1") || !require("rot_2")
-        || !require("rot_3") || !require("f_dc_0") || !require("f_dc_1") || !require("f_dc_2")) {
-        return false;
-    }
-
-    rest_count = 0;
-    for (int i = 0;; ++i) {
-        const std::string name = "f_rest_" + std::to_string(i);
-        if (!index_of.contains(name)) {
-            break;
-        }
-        ++rest_count;
-    }
-    for (const auto& [name, _] : index_of) {
-        if (name.rfind("f_rest_", 0) != 0) {
+/**
+ * @brief Rejects `f_rest` properties that are not part of the contiguous run.
+ *
+ * A file with `f_rest_0..8` plus a stray `f_rest_20` would otherwise load as
+ * degree 1 and quietly drop a coefficient.
+ */
+[[nodiscard]] bool checkRestContiguity(const PlyElement& element, int rest_count, std::string& out_error) {
+    for (const PlyProperty& property : element.properties) {
+        if (property.name.rfind("f_rest_", 0) != 0) {
             continue;
         }
-        const std::string suffix = name.substr(7);
-        if (suffix.empty()
-            || !std::all_of(suffix.begin(), suffix.end(), [](unsigned char c) { return std::isdigit(c) != 0; })) {
-            reportError(error, "invalid f_rest property name: " + name);
-            return false;
-        }
+        const std::string suffix = property.name.substr(7);
         int index = 0;
-        const auto* begin = suffix.data();
-        const auto* end = begin + suffix.size();
+        const char* begin = suffix.data();
+        const char* end = begin + suffix.size();
         const auto [ptr, ec] = std::from_chars(begin, end, index);
-        if (ec != std::errc{} || ptr != end) {
-            reportError(error, "invalid f_rest property name: " + name);
+        if (suffix.empty() || ec != std::errc{} || ptr != end) {
+            out_error = "invalid f_rest property name: " + property.name;
             return false;
         }
-        if (index < 0 || index >= rest_count) {
-            reportError(error, "non-contiguous or out-of-range f_rest property: " + name);
+        if (index >= rest_count) {
+            out_error = "non-contiguous f_rest property: " + property.name;
             return false;
         }
-    }
-
-    degree = degreeFromRestCount(rest_count);
-    if (degree < 0) {
-        reportError(error, "unsupported f_rest count " + std::to_string(rest_count) + "; expected 0, 9, 24, or 45");
-        return false;
     }
     return true;
 }
 
-[[nodiscard]] bool bodyByteCount(std::size_t vertex_count,
-                                 std::size_t floats_per_vertex,
-                                 std::size_t& body_bytes,
-                                 std::string* error) {
-    const std::size_t bytes_per_vertex = floats_per_vertex * sizeof(float);
-    if (bytes_per_vertex != 0 && vertex_count > std::numeric_limits<std::size_t>::max() / bytes_per_vertex) {
-        reportError(error, "PLY body size overflows size_t");
+[[nodiscard]] bool resolveVertexLayout(const PlyElement& element, VertexLayout& out_layout, std::string& out_error) {
+    if (element.has_list) {
+        out_error = "vertex element has a list property, which a Gaussian PLY never does";
         return false;
     }
-    body_bytes = vertex_count * bytes_per_vertex;
+
+    if (!requireFloatProperty(element, "x", out_layout.x, out_error)
+        || !requireFloatProperty(element, "y", out_layout.y, out_error)
+        || !requireFloatProperty(element, "z", out_layout.z, out_error)
+        || !requireFloatProperty(element, "opacity", out_layout.opacity, out_error)) {
+        return false;
+    }
+    for (int i = 0; i < 3; ++i) {
+        if (!requireFloatProperty(element, "scale_" + std::to_string(i), out_layout.scale[i], out_error)
+            || !requireFloatProperty(element, "f_dc_" + std::to_string(i), out_layout.dc[i], out_error)) {
+            return false;
+        }
+    }
+    for (int i = 0; i < 4; ++i) {
+        if (!requireFloatProperty(element, "rot_" + std::to_string(i), out_layout.rot[i], out_error)) {
+            return false;
+        }
+    }
+
+    const int rest_count = countRestProperties(element);
+    if (!checkRestContiguity(element, rest_count, out_error)) {
+        return false;
+    }
+    out_layout.sh_degree = degreeFromRestCount(rest_count);
+    if (out_layout.sh_degree < 0) {
+        out_error = "unsupported f_rest count " + std::to_string(rest_count) + "; expected 0, 9, 24, or 45";
+        return false;
+    }
+
+    out_layout.rest.resize(static_cast<std::size_t>(rest_count));
+    for (int i = 0; i < rest_count; ++i) {
+        if (!requireFloatProperty(element,
+                                  "f_rest_" + std::to_string(i),
+                                  out_layout.rest[static_cast<std::size_t>(i)],
+                                  out_error)) {
+            return false;
+        }
+    }
     return true;
 }
 
-[[nodiscard]] bool readBodyBytes(std::istream& in,
-                                 std::size_t body_bytes,
-                                 std::vector<std::uint8_t>& body,
-                                 std::string* error) {
-    if (body_bytes == 0) {
-        body.clear();
-        return true;
-    }
-
-    const auto body_start = in.tellg();
-    if (!in || body_start < 0) {
-        reportError(error, "failed to locate PLY body");
-        return false;
-    }
-    in.seekg(0, std::ios::end);
-    const auto end_pos = in.tellg();
-    if (!in || end_pos < 0 || static_cast<std::uint64_t>(end_pos - body_start) < body_bytes) {
-        reportError(error, "truncated PLY body");
-        return false;
-    }
-    in.seekg(body_start);
-    if (!in) {
-        reportError(error, "failed to rewind to PLY body");
-        return false;
-    }
-
-    body.resize(body_bytes);
-    in.read(reinterpret_cast<char*>(body.data()), static_cast<std::streamsize>(body_bytes));
-    if (static_cast<std::size_t>(in.gcount()) != body_bytes) {
-        reportError(error, "truncated PLY body");
-        return false;
+/**
+ * @brief Total bytes occupied by the elements declared before `vertex`.
+ *
+ * Those bytes sit between `end_header` and the vertex data. Skipping them is
+ * what keeps a file that declares, say, a camera element first from being read
+ * as if its data were the first Gaussian.
+ */
+[[nodiscard]] bool bytesBeforeVertex(const PlyHeader& header,
+                                     std::size_t vertex_index,
+                                     std::size_t& out_bytes,
+                                     std::string& out_error) {
+    out_bytes = 0;
+    for (std::size_t i = 0; i < vertex_index; ++i) {
+        const PlyElement& element = header.elements[i];
+        if (element.has_list) {
+            out_error =
+                "cannot skip element '" + element.name + "' before vertex: it has a list property of unknown length";
+            return false;
+        }
+        const std::size_t bytes = element.byteCount();
+        if (element.stride != 0 && element.count > std::numeric_limits<std::size_t>::max() / element.stride) {
+            out_error = "element '" + element.name + "' size overflows size_t";
+            return false;
+        }
+        if (bytes > std::numeric_limits<std::size_t>::max() - out_bytes) {
+            out_error = "PLY body offset overflows size_t";
+            return false;
+        }
+        out_bytes += bytes;
     }
     return true;
 }
@@ -345,215 +216,227 @@ struct PlyHeader {
 
 namespace vne::gs {
 
-bool readGaussianPly(const std::string& path, GaussianCloud& out, std::string* error) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        reportError(error, "failed to open: " + path);
+PlyReader::PlyReader(const PlyReadOptions& options)
+    : options_(options) {}
+
+const PlyReadOptions& PlyReader::options() const noexcept {
+    return options_;
+}
+
+void PlyReader::setOptions(const PlyReadOptions& options) noexcept {
+    options_ = options;
+}
+
+const PlyReadStats& PlyReader::stats() const noexcept {
+    return stats_;
+}
+
+const std::string& PlyReader::error() const noexcept {
+    return error_;
+}
+
+bool PlyReader::read(const std::string& path, GaussianCloud& out_cloud) {
+    stats_ = PlyReadStats{};
+    error_.clear();
+
+    const auto fail = [this](std::string message) -> bool {
+        error_ = std::move(message);
+        VNE_LOG_ERROR << error_;
         return false;
-    }
-
-    PlyHeader header;
-    if (!parseHeader(in, header, error)) {
-        return false;
-    }
-
-    std::unordered_map<std::string, int> index_of;
-    int rest_count = 0;
-    int degree = 0;
-    if (!resolvePropertyMap(header.property_names, index_of, rest_count, degree, error)) {
-        return false;
-    }
-
-    const int property_count = static_cast<int>(header.property_names.size());
-    const std::size_t floats_per_vertex = static_cast<std::size_t>(property_count);
-    std::size_t body_bytes = 0;
-    if (!bodyByteCount(header.vertex_count, floats_per_vertex, body_bytes, error)) {
-        return false;
-    }
-
-    std::vector<std::uint8_t> body;
-    if (!readBodyBytes(in, body_bytes, body, error)) {
-        return false;
-    }
-
-    const int coeffs = shCoeffCount(degree);
-    const int rest_per_channel = coeffs - 1;
-
-    const int ix = index_of.at("x");
-    const int iy = index_of.at("y");
-    const int iz = index_of.at("z");
-    const int iscale0 = index_of.at("scale_0");
-    const int iscale1 = index_of.at("scale_1");
-    const int iscale2 = index_of.at("scale_2");
-    const int iopacity = index_of.at("opacity");
-    const int irot0 = index_of.at("rot_0");
-    const int irot1 = index_of.at("rot_1");
-    const int irot2 = index_of.at("rot_2");
-    const int irot3 = index_of.at("rot_3");
-    const int idc0 = index_of.at("f_dc_0");
-    const int idc1 = index_of.at("f_dc_1");
-    const int idc2 = index_of.at("f_dc_2");
-    std::vector<int> rest_indices(static_cast<std::size_t>(rest_count));
-    for (int r = 0; r < rest_count; ++r) {
-        rest_indices[static_cast<std::size_t>(r)] = index_of.at("f_rest_" + std::to_string(r));
-    }
-
-    out.clear();
-    out.setShDegree(degree);
-    out.positions().resize(header.vertex_count);
-    out.scales().resize(header.vertex_count);
-    out.rotations().resize(header.vertex_count);
-    out.opacities().resize(header.vertex_count);
-    out.sh().assign(header.vertex_count * static_cast<std::size_t>(coeffs) * 3u, 0.0f);
-
-    const auto at = [&](std::size_t vertex, int prop, const char* name, float& value) -> bool {
-        const std::size_t offset = (vertex * floats_per_vertex + static_cast<std::size_t>(prop)) * sizeof(float);
-        return readFiniteFloatLE(body.data() + offset, value, vertex, name, error);
     };
 
-    for (std::size_t i = 0; i < header.vertex_count; ++i) {
-        float x = 0.0f;
-        float y = 0.0f;
-        float z = 0.0f;
-        float scale0 = 0.0f;
-        float scale1 = 0.0f;
-        float scale2 = 0.0f;
-        float opacity = 0.0f;
-        float rot0 = 0.0f;
-        float rot1 = 0.0f;
-        float rot2 = 0.0f;
-        float rot3 = 0.0f;
-        float dc0 = 0.0f;
-        float dc1 = 0.0f;
-        float dc2 = 0.0f;
-        if (!at(i, ix, "x", x) || !at(i, iy, "y", y) || !at(i, iz, "z", z) || !at(i, iscale0, "scale_0", scale0)
-            || !at(i, iscale1, "scale_1", scale1) || !at(i, iscale2, "scale_2", scale2)
-            || !at(i, iopacity, "opacity", opacity) || !at(i, irot0, "rot_0", rot0) || !at(i, irot1, "rot_1", rot1)
-            || !at(i, irot2, "rot_2", rot2) || !at(i, irot3, "rot_3", rot3) || !at(i, idc0, "f_dc_0", dc0)
-            || !at(i, idc1, "f_dc_1", dc1) || !at(i, idc2, "f_dc_2", dc2)) {
-            return false;
-        }
-
-        out.positions()[i] = {x, y, z};
-        out.scales()[i] = {std::exp(scale0), std::exp(scale1), std::exp(scale2)};
-        out.opacities()[i] = sigmoid(opacity);
-
-        // File order is (w, x, y, z). Quatf is (x, y, z, w).
-        out.rotations()[i] = math::Quatf(rot1, rot2, rot3, rot0).normalized();
-
-        const std::size_t sh_base = i * static_cast<std::size_t>(coeffs) * 3u;
-        out.sh()[sh_base + 0] = dc0;
-        out.sh()[sh_base + 1] = dc1;
-        out.sh()[sh_base + 2] = dc2;
-
-        if (rest_per_channel > 0) {
-            for (int k = 1; k < coeffs; ++k) {
-                const int rest_index = k - 1;
-                float r0 = 0.0f;
-                float r1 = 0.0f;
-                float r2 = 0.0f;
-                const int prop0 = rest_indices[static_cast<std::size_t>(rest_index)];
-                const int prop1 = rest_indices[static_cast<std::size_t>(rest_per_channel + rest_index)];
-                const int prop2 = rest_indices[static_cast<std::size_t>(2 * rest_per_channel + rest_index)];
-                if (!at(i, prop0, "f_rest", r0) || !at(i, prop1, "f_rest", r1) || !at(i, prop2, "f_rest", r2)) {
-                    return false;
-                }
-                const std::size_t dst = sh_base + static_cast<std::size_t>(k) * 3u;
-                out.sh()[dst + 0] = r0;
-                out.sh()[dst + 1] = r1;
-                out.sh()[dst + 2] = r2;
-            }
-        }
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        return fail("failed to open: " + path);
     }
 
+    detail::PlyHeader header;
+    std::string error;
+    if (!detail::parsePlyHeader(in, header, error)) {
+        return fail(std::move(error));
+    }
+
+    const std::size_t vertex_index = header.indexOf("vertex");
+    if (vertex_index == header.elements.size()) {
+        return fail("PLY has no vertex element");
+    }
+    const detail::PlyElement& vertex_element = header.elements[vertex_index];
+
+    VertexLayout layout;
+    if (!resolveVertexLayout(vertex_element, layout, error)) {
+        return fail(std::move(error));
+    }
+
+    std::size_t skip_bytes = 0;
+    if (!bytesBeforeVertex(header, vertex_index, skip_bytes, error)) {
+        return fail(std::move(error));
+    }
+
+    const std::size_t stride = vertex_element.stride;
+    const std::size_t declared = vertex_element.count;
+    stats_.declared_vertex_count = declared;
+    stats_.sh_degree = layout.sh_degree;
+
+    if (stride == 0 && declared > 0) {
+        return fail("vertex element declares no properties");
+    }
+    if (stride != 0 && declared > std::numeric_limits<std::size_t>::max() / stride) {
+        return fail("PLY body size overflows size_t");
+    }
+
+    // Check the file is actually big enough before trusting the header's count
+    // to size an allocation: a corrupt or hostile header must not be able to
+    // ask for gigabytes that the file cannot back.
+    const std::streampos body_start = in.tellg();
+    if (body_start < 0) {
+        return fail("failed to locate PLY body");
+    }
+    in.seekg(0, std::ios::end);
+    const std::streampos file_end = in.tellg();
+    if (!in || file_end < body_start) {
+        return fail("failed to measure PLY file");
+    }
+    const std::size_t available = static_cast<std::size_t>(file_end - body_start);
+    // Reject oversized preceding elements before budgeting vertices or seeking:
+    // with declared == 0, needed is 0 and would otherwise pass a short file.
+    if (skip_bytes > available) {
+        return fail("truncated PLY body: preceding elements need " + std::to_string(skip_bytes) + " bytes, file has "
+                    + std::to_string(available));
+    }
+    const std::size_t vertex_budget = available - skip_bytes;
+    const std::size_t needed = declared * stride;
+    if (needed > vertex_budget) {
+        return fail("truncated PLY body: header declares " + std::to_string(needed) + " bytes of vertex data, file has "
+                    + std::to_string(vertex_budget));
+    }
+    in.seekg(body_start + static_cast<std::streamoff>(skip_bytes));
+    if (!in) {
+        return fail("failed to seek to the vertex body");
+    }
+
+    // Assembled separately so a mid-file failure cannot leave the caller's
+    // cloud looking populated.
+    GaussianCloud cloud;
+    cloud.setShDegree(layout.sh_degree);
+    cloud.resize(declared);
+
+    const int coeffs = cloud.shCoeffCount();
+    const int rest_per_channel = coeffs - 1;
+    const std::span<math::Vec3f> positions = cloud.positions();
+    const std::span<math::Vec3f> scales = cloud.scales();
+    const std::span<math::Quatf> rotations = cloud.rotations();
+    const std::span<float> opacities = cloud.opacities();
+    const std::span<float> sh = cloud.sh();
+
+    const std::size_t vertices_per_chunk =
+        (stride == 0) ? 1u : std::max<std::size_t>(1u, options_.chunk_bytes / stride);
+    std::vector<std::uint8_t> buffer(vertices_per_chunk * stride);
+
+    std::size_t written = 0;
+    std::size_t remaining = declared;
+    std::size_t vertex_index_in_file = 0;
+
+    while (remaining > 0) {
+        const std::size_t batch = std::min(vertices_per_chunk, remaining);
+        const std::size_t bytes = batch * stride;
+        in.read(reinterpret_cast<char*>(buffer.data()), static_cast<std::streamsize>(bytes));
+        if (static_cast<std::size_t>(in.gcount()) != bytes) {
+            return fail("truncated PLY body");
+        }
+
+        for (std::size_t v = 0; v < batch; ++v, ++vertex_index_in_file) {
+            const std::uint8_t* record = buffer.data() + v * stride;
+
+            const auto value = [record](std::size_t offset) noexcept { return detail::readFloatLE(record + offset); };
+
+            const float x = value(layout.x);
+            const float y = value(layout.y);
+            const float z = value(layout.z);
+            const float scale0 = value(layout.scale[0]);
+            const float scale1 = value(layout.scale[1]);
+            const float scale2 = value(layout.scale[2]);
+            const float opacity = value(layout.opacity);
+            const float rot0 = value(layout.rot[0]);
+            const float rot1 = value(layout.rot[1]);
+            const float rot2 = value(layout.rot[2]);
+            const float rot3 = value(layout.rot[3]);
+
+            bool is_finite = std::isfinite(x) && std::isfinite(y) && std::isfinite(z) && std::isfinite(scale0)
+                             && std::isfinite(scale1) && std::isfinite(scale2) && std::isfinite(opacity)
+                             && std::isfinite(rot0) && std::isfinite(rot1) && std::isfinite(rot2)
+                             && std::isfinite(rot3);
+
+            const std::size_t sh_base = written * static_cast<std::size_t>(coeffs) * GaussianCloud::kChannels;
+
+            // Gather SH before committing, so a non-finite coefficient can
+            // still drop the whole Gaussian.
+            std::array<float, 3> dc{value(layout.dc[0]), value(layout.dc[1]), value(layout.dc[2])};
+            is_finite = is_finite && std::isfinite(dc[0]) && std::isfinite(dc[1]) && std::isfinite(dc[2]);
+
+            if (is_finite && rest_per_channel > 0) {
+                for (int k = 1; k < coeffs && is_finite; ++k) {
+                    const std::size_t rest_index = static_cast<std::size_t>(k - 1);
+                    const std::size_t per_channel = static_cast<std::size_t>(rest_per_channel);
+                    // f_rest is channel-major in the file: all red coefficients,
+                    // then all green, then all blue. Renderers want RGB triplets
+                    // per coefficient, so transpose here.
+                    const float r = value(layout.rest[rest_index]);
+                    const float g = value(layout.rest[per_channel + rest_index]);
+                    const float b = value(layout.rest[2u * per_channel + rest_index]);
+                    if (!std::isfinite(r) || !std::isfinite(g) || !std::isfinite(b)) {
+                        is_finite = false;
+                        break;
+                    }
+                    const std::size_t dst = sh_base + static_cast<std::size_t>(k) * GaussianCloud::kChannels;
+                    sh[dst + 0] = r;
+                    sh[dst + 1] = g;
+                    sh[dst + 2] = b;
+                }
+            }
+
+            if (!is_finite) {
+                if (!options_.skip_non_finite) {
+                    return fail("non-finite value at vertex " + std::to_string(vertex_index_in_file));
+                }
+                ++stats_.skipped_non_finite;
+                continue;
+            }
+
+            positions[written] = {x, y, z};
+            scales[written] = {std::exp(scale0), std::exp(scale1), std::exp(scale2)};
+            opacities[written] = sigmoid(opacity);
+            // File order is (w, x, y, z); Quatf is (x, y, z, w).
+            rotations[written] = math::Quatf(rot1, rot2, rot3, rot0).normalized();
+            sh[sh_base + 0] = dc[0];
+            sh[sh_base + 1] = dc[1];
+            sh[sh_base + 2] = dc[2];
+            ++written;
+        }
+
+        remaining -= batch;
+    }
+
+    if (written != declared) {
+        // Drops the tail left by skipped Gaussians; earlier entries keep their
+        // offsets, so the SH block stays aligned.
+        cloud.resize(written);
+        VNE_LOG_WARN << "dropped " << stats_.skipped_non_finite << " non-finite Gaussians from " << path;
+    }
+
+    stats_.loaded_vertex_count = written;
+    out_cloud = std::move(cloud);
     return true;
 }
 
-bool writeGaussianPly(const std::string& path, const GaussianCloud& cloud, std::string* error) {
-    if (cloud.shDegree() < 0 || cloud.shDegree() > 3) {
-        reportError(error, "unsupported sh_degree " + std::to_string(cloud.shDegree()));
-        return false;
+bool readGaussianPly(const std::string& path, GaussianCloud& out, std::string* error) {
+    PlyReader reader;
+    if (reader.read(path, out)) {
+        return true;
     }
-    const int coeffs = shCoeffCount(cloud.shDegree());
-    const int rest_per_channel = coeffs - 1;
-    const int rest_count = 3 * rest_per_channel;
-    const std::size_t expected_sh = cloud.size() * static_cast<std::size_t>(coeffs) * 3u;
-    if (cloud.scales().size() != cloud.size() || cloud.rotations().size() != cloud.size()
-        || cloud.opacities().size() != cloud.size() || cloud.sh().size() != expected_sh) {
-        reportError(error, "GaussianCloud attribute sizes do not match");
-        return false;
+    if (error != nullptr) {
+        *error = reader.error();
     }
-
-    std::ofstream out(path, std::ios::binary);
-    if (!out) {
-        reportError(error, "failed to open for write: " + path);
-        return false;
-    }
-
-    out << "ply\n";
-    out << "format binary_little_endian 1.0\n";
-    out << "element vertex " << cloud.size() << "\n";
-    out << "property float x\n";
-    out << "property float y\n";
-    out << "property float z\n";
-    out << "property float nx\n";
-    out << "property float ny\n";
-    out << "property float nz\n";
-    out << "property float f_dc_0\n";
-    out << "property float f_dc_1\n";
-    out << "property float f_dc_2\n";
-    for (int r = 0; r < rest_count; ++r) {
-        out << "property float f_rest_" << r << "\n";
-    }
-    out << "property float opacity\n";
-    out << "property float scale_0\n";
-    out << "property float scale_1\n";
-    out << "property float scale_2\n";
-    out << "property float rot_0\n";
-    out << "property float rot_1\n";
-    out << "property float rot_2\n";
-    out << "property float rot_3\n";
-    out << "end_header\n";
-
-    for (std::size_t i = 0; i < cloud.size(); ++i) {
-        const math::Vec3f& position = cloud.positions()[i];
-        writeFloatLE(out, position.x());
-        writeFloatLE(out, position.y());
-        writeFloatLE(out, position.z());
-        writeFloatLE(out, 0.0f);
-        writeFloatLE(out, 0.0f);
-        writeFloatLE(out, 0.0f);
-
-        const std::size_t sh_base = i * static_cast<std::size_t>(coeffs) * 3u;
-        writeFloatLE(out, cloud.sh()[sh_base + 0]);
-        writeFloatLE(out, cloud.sh()[sh_base + 1]);
-        writeFloatLE(out, cloud.sh()[sh_base + 2]);
-
-        for (int channel = 0; channel < 3; ++channel) {
-            for (int rest_index = 0; rest_index < rest_per_channel; ++rest_index) {
-                const int k = rest_index + 1;
-                const std::size_t src = sh_base + static_cast<std::size_t>(k) * 3u + static_cast<std::size_t>(channel);
-                writeFloatLE(out, cloud.sh()[src]);
-            }
-        }
-
-        writeFloatLE(out, logit(cloud.opacities()[i]));
-        writeFloatLE(out, std::log(std::max(cloud.scales()[i].x(), kLogitEps)));
-        writeFloatLE(out, std::log(std::max(cloud.scales()[i].y(), kLogitEps)));
-        writeFloatLE(out, std::log(std::max(cloud.scales()[i].z(), kLogitEps)));
-
-        const math::Quatf rotation = cloud.rotations()[i].normalized();
-        writeFloatLE(out, rotation.w);
-        writeFloatLE(out, rotation.x);
-        writeFloatLE(out, rotation.y);
-        writeFloatLE(out, rotation.z);
-    }
-
-    if (!out) {
-        reportError(error, "failed while writing: " + path);
-        return false;
-    }
-    return true;
+    return false;
 }
 
 }  // namespace vne::gs

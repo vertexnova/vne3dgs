@@ -45,7 +45,7 @@ Status key: `[ ]` not started · `[~]` in progress · `[x]` done
 
 | # | Task | Status |
 |---|------|--------|
-| 04 | [Cameras and projecting centers](tasks/04_camera_and_points.md) | [ ] |
+| 04 | [Cameras and projecting centers](tasks/04_camera_and_points.md) | [x] |
 | 05 | [Projecting the ellipsoid (EWA splatting)](tasks/05_ewa_projection.md) | [ ] |
 | 06 | [Sort and blend: the first real image](tasks/06_sort_and_blend.md) | [ ] |
 | 07 | [Tiles: rehearsing the GPU algorithm](tasks/07_tile_renderer.md) | [ ] |

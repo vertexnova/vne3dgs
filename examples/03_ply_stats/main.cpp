@@ -63,11 +63,11 @@ int main(int argc, char** argv) {
     }
 
     vne::gs::GaussianCloud cloud;
-    std::string error;
+    vne::gs::PlyReader reader;
 
     const auto start = std::chrono::steady_clock::now();
-    if (!vne::gs::readGaussianPly(path, cloud, &error)) {
-        VNE_LOG_ERROR << "Failed to load " << path << ": " << error;
+    if (!reader.read(path, cloud)) {
+        VNE_LOG_ERROR << "Failed to load " << path << ": " << reader.error();
         return 1;
     }
     const auto elapsed_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
@@ -76,6 +76,10 @@ int main(int argc, char** argv) {
     VNE_LOG_INFO << "gaussians: " << cloud.size();
     VNE_LOG_INFO << "sh_degree: " << cloud.shDegree();
     VNE_LOG_INFO << "load_ms: " << elapsed_ms;
+    if (reader.stats().skipped_non_finite > 0) {
+        VNE_LOG_INFO << "skipped_non_finite: " << reader.stats().skipped_non_finite << " of "
+                     << reader.stats().declared_vertex_count;
+    }
 
     if (cloud.size() == 0) {
         return 0;
@@ -84,7 +88,7 @@ int main(int argc, char** argv) {
     std::vector<float> xs;
     std::vector<float> ys;
     std::vector<float> zs;
-    std::vector<float> opacities = cloud.opacities();
+    std::vector<float> opacities(cloud.opacities().begin(), cloud.opacities().end());
     std::vector<float> log_scales;
     xs.reserve(cloud.size());
     ys.reserve(cloud.size());
